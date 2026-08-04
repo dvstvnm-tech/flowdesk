@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import type { Profile, Task } from '@/lib/database.types';
-import { PRIORITY_META, fullName } from '@/lib/utils';
+import { PRIORITY_META } from '@/lib/utils';
 
 export default function QuickAddModal({
   status, profiles, onClose, onCreated,
@@ -12,7 +12,6 @@ export default function QuickAddModal({
   const supabase = createClient();
   const { profile: me } = useCurrentUser();
   const [title, setTitle] = useState('');
-  const [assigneeId, setAssigneeId] = useState('');
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10);
@@ -25,7 +24,7 @@ export default function QuickAddModal({
     const { data, error } = await supabase
       .from('tasks')
       .insert({
-        title: title.trim(), status, assignee_id: assigneeId || null, reporter_id: me.id,
+        title: title.trim(), status, assignee_id: me.id, reporter_id: me.id,
         priority, due_date: new Date(dueDate + 'T12:00:00').toISOString(),
       })
       .select().single();
@@ -46,21 +45,15 @@ export default function QuickAddModal({
             <label className="text-xs font-semibold text-text2 block mb-1">Название задачи</label>
             <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например: Подготовить отчёт за неделю" className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm" />
           </div>
+          <div className="text-xs text-muted -mt-1">Исполнитель: {me ? `${me.first_name} ${me.last_name}`.trim() || me.email : '…'}</div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-text2 block mb-1">Исполнитель</label>
-              <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm">
-                <option value="">Не назначен</option>
-                {profiles.map((p) => <option key={p.id} value={p.id}>{fullName(p) || p.email}</option>)}
-              </select>
-            </div>
             <div>
               <label className="text-xs font-semibold text-text2 block mb-1">Приоритет</label>
               <select value={priority} onChange={(e) => setPriority(e.target.value as any)} className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm">
                 {Object.entries(PRIORITY_META).map(([id, m]) => <option key={id} value={id}>{m.label}</option>)}
               </select>
             </div>
-            <div className="col-span-2">
+            <div>
               <label className="text-xs font-semibold text-text2 block mb-1">Дедлайн</label>
               <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm" />
             </div>
