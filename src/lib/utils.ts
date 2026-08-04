@@ -8,40 +8,34 @@ export function initials(name: string): string {
     .join('')
     .toUpperCase();
 }
-
 export function formatDate(d: string | Date | null): string {
   if (!d) return '—';
   const date = typeof d === 'string' ? new Date(d) : d;
   return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
-
 export function formatDateTime(d: string | Date | null): string {
   if (!d) return '—';
   const date = typeof d === 'string' ? new Date(d) : d;
   return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
-
 export function isOverdue(dueDate: string | null, status: string): boolean {
   if (!dueDate) return false;
-  return new Date(dueDate) < new Date() && status !== 'done';
+  return new Date(dueDate) < new Date() && status !== 'done' && status !== 'approved';
 }
-
 export const PRIORITY_META: Record<string, { label: string; color: string }> = {
   high: { label: 'Высокий', color: '#DC2626' },
   medium: { label: 'Средний', color: '#C77C0A' },
   low: { label: 'Низкий', color: '#868C97' },
 };
-
 export const STATUS_META: Record<string, { label: string; color: string }> = {
-  backlog: { label: 'Бэклог', color: '#868C97' },
+  backlog: { label: 'Глобальные задачи KPI', color: '#868C97' },
   todo: { label: 'К выполнению', color: '#2F5FE0' },
-  in_progress: { label: 'В работе', color: '#C77C0A' },
-  review: { label: 'На проверке', color: '#7C4FE0' },
-  done: { label: 'Выполнено', color: '#16A34A' },
+  in_progress: { label: 'Текущие задачи', color: '#C77C0A' },
+  review: { label: 'Проекты', color: '#7C4FE0' },
+  done: { label: 'На согласование', color: '#2F5FE0' },
+  approved: { label: 'Согласовано', color: '#16A34A' },
 };
-
-export const STATUS_ORDER = ['backlog', 'todo', 'in_progress', 'review', 'done'];
-
+export const STATUS_ORDER = ['backlog', 'in_progress', 'review', 'done'];
 export function fullName(p: { first_name?: string; last_name?: string } | null | undefined): string {
   if (!p) return '';
   return `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim();
