@@ -2,25 +2,28 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useCurrentUser } from '@/hooks/useCurrentUser';
 import type { Task, Profile } from '@/lib/database.types';
-import { STATUS_META, STATUS_ORDER, PRIORITY_META, formatDate, isOverdue, fullName } from '@/lib/utils';
+import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 import TaskPanel from '@/components/TaskPanel';
 import QuickAddModal from '@/components/QuickAddModal';
 
+// Блоки, которые показываем под каждым сотрудником, в этом порядке
+const EMPLOYEE_BLOCK_STATUSES = ['backlog', 'in_progress', 'review', 'done'] as const;
+
 export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: Task[]; profiles: Profile[] }) {
   const supabase = createClient();
+  const { profile: me } = useCurrentUser();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const [quickAddStatus, setQuickAddStatus] = useState<string | null>(null);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [quickAdd, setQuickAdd] = useState<string | null>(null); // статус, для которого открыта форма
 
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [commentMatches, setCommentMatches] = useState<{ task_id: string; text: string }[]>([]);
 
   const [filterOpen, setFilterOpen] = useState(false);
-  const [fAssignee, setFAssignee] = useState('');
   const [fPriority, setFPriority] = useState('');
   const [fOverdue, setFOverdue] = useState(false);
 
@@ -71,36 +74,24 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
 
   const visibleTasks = useMemo(() => {
     return tasks.filter((t) => {
-      if (fAssignee && t.assignee_id !== fAssignee) return false;
       if (fPriority && t.priority !== fPriority) return false;
       if (fOverdue && !isOverdue(t.due_date, t.status)) return false;
       return true;
     });
-  }, [tasks, fAssignee, fPriority, fOverdue]);
-
-  async function moveTask(taskId: string, newStatus: string) {
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.status === newStatus) return;
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus as Task['status'] } : t)));
-    const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', taskId);
-    if (error) {
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? task : t)));
-      alert('Не удалось изменить статус: ' + error.message);
-    }
-  }
+  }, [tasks, fPriority, fOverdue]);
 
   const total = tasks.length;
   const inProgress = tasks.filter((t) => t.status === 'in_progress').length;
   const review = tasks.filter((t) => t.status === 'review').length;
   const overdue = tasks.filter((t) => isOverdue(t.due_date, t.status)).length;
-  const done = tasks.filter((t) => t.status === 'done').length;
+  const done = tasks.filter((t) => t.status === 'done' || t.status === 'approved').length;
 
   return (
     <div className="p-6">
       <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
         <div>
           <h1 className="text-xl font-extrabold tracking-tight">Доска</h1>
-          <p className="text-sm text-muted mt-0.5">Общая доска команды — изменения видны всем мгновенно</p>
+          <p className="text-sm text-muted mt-0.5">Задачи каждого сотрудника — сгруппированы по человеку</p>
         </div>
 
         <div className="relative">
@@ -142,27 +133,19 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
 
       <div className="grid grid-cols-5 gap-2.5 mb-4">
         <Stat label="Всего задач" value={total} />
-        <Stat label="В работе" value={inProgress} accent />
-        <Stat label="На проверке" value={review} />
+        <Stat label="Текущие задачи" value={inProgress} accent />
+        <Stat label="Проекты" value={review} />
         <Stat label="Просрочено" value={overdue} danger />
         <Stat label="Завершено" value={done} success />
       </div>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
         <button onClick={() => setFilterOpen((v) => !v)} className={`text-xs font-semibold border rounded-full px-3 py-1.5 ${filterOpen ? 'bg-accentSoft border-accent text-accent' : 'border-border text-text2'}`}>⚗ Фильтры</button>
-        {fAssignee && <FilterChip label={fullName(profiles.find((p) => p.id === fAssignee)) || 'Исполнитель'} onClear={() => setFAssignee('')} />}
         {fPriority && <FilterChip label={PRIORITY_META[fPriority].label} onClear={() => setFPriority('')} />}
         {fOverdue && <FilterChip label="Просроченные" onClear={() => setFOverdue(false)} />}
       </div>
       {filterOpen && (
-        <div className="card p-3.5 mb-4 grid grid-cols-3 gap-3">
-          <div>
-            <div className="text-[11px] font-semibold text-muted uppercase mb-1">Исполнитель</div>
-            <select value={fAssignee} onChange={(e) => setFAssignee(e.target.value)} className="w-full border border-border bg-surface2 rounded-md px-2 py-1.5 text-[13px]">
-              <option value="">Все</option>
-              {profiles.map((p) => <option key={p.id} value={p.id}>{fullName(p) || p.email}</option>)}
-            </select>
-          </div>
+        <div className="card p-3.5 mb-5 grid grid-cols-2 gap-3">
           <div>
             <div className="text-[11px] font-semibold text-muted uppercase mb-1">Приоритет</div>
             <select value={fPriority} onChange={(e) => setFPriority(e.target.value)} className="w-full border border-border bg-surface2 rounded-md px-2 py-1.5 text-[13px]">
@@ -176,51 +159,62 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
         </div>
       )}
 
-      <div className="flex gap-3.5 overflow-x-auto pb-5 items-start">
-        {STATUS_ORDER.map((status) => {
+      {profiles.map((p) => (
+        <EmployeeSection
+          key={p.id}
+          profile={p}
+          tasks={visibleTasks.filter((t) => t.assignee_id === p.id)}
+          isMine={me?.id === p.id}
+          onOpenTask={setOpenTaskId}
+          onAdd={(status) => setQuickAdd(status)}
+        />
+      ))}
+      {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
+
+      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} onClose={() => setOpenTaskId(null)} />}
+
+      {quickAdd && (
+        <QuickAddModal
+          status={quickAdd}
+          profiles={profiles}
+          onClose={() => setQuickAdd(null)}
+          onCreated={(t) => { setTasks((prev) => [t, ...prev]); setQuickAdd(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EmployeeSection({
+  profile, tasks, isMine, onOpenTask, onAdd,
+}: { profile: Profile; tasks: Task[]; isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void }) {
+  return (
+    <div className="mb-7">
+      <div className="flex items-center gap-2.5 mb-2.5">
+        <Avatar profile={profile} size={30} />
+        <span className="font-bold text-[14.5px]">{fullName(profile) || profile.email}</span>
+        <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{tasks.length} задач</span>
+      </div>
+      <div className="grid grid-cols-4 gap-2.5">
+        {EMPLOYEE_BLOCK_STATUSES.map((status) => {
           const meta = STATUS_META[status];
-          const colTasks = visibleTasks.filter((t) => t.status === status);
+          const blockTasks = tasks.filter((t) => t.status === status);
           return (
-            <div
-              key={status}
-              className="flex-none w-[278px] bg-surface2 border border-border rounded-2xl p-2.5"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); if (draggedId) moveTask(draggedId, status); }}
-            >
+            <div key={status} className="bg-surface2 border border-border rounded-2xl p-2.5">
               <div className="flex items-center gap-2 px-1.5 pb-2.5">
                 <span className="w-2 h-2 rounded-full" style={{ background: meta.color }} />
-                <span className="font-bold text-[12.5px]">{meta.label}</span>
-                <span className="ml-auto text-[11.5px] text-muted bg-surface border border-border rounded-full px-1.5">{colTasks.length}</span>
-                <button onClick={() => setQuickAddStatus(status)} className="text-muted hover:text-accent text-sm px-0.5">+</button>
+                <span className="font-bold text-[12px]">{meta.label}</span>
+                <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{blockTasks.length}</span>
+                {isMine && <button onClick={() => onAdd(status)} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
               </div>
               <div className="flex flex-col gap-2 min-h-[20px]">
-                {colTasks.map((t) => (
-                  <TaskCard
-                    key={t.id}
-                    task={t}
-                    assignee={profiles.find((p) => p.id === t.assignee_id)}
-                    onOpen={() => setOpenTaskId(t.id)}
-                    onDragStart={() => setDraggedId(t.id)}
-                    onDragEnd={() => setDraggedId(null)}
-                  />
-                ))}
-                {colTasks.length === 0 && <div className="text-center py-3 text-[11.5px] text-muted/70">Нет задач</div>}
+                {blockTasks.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
+                {blockTasks.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
               </div>
             </div>
           );
         })}
       </div>
-
-      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} onClose={() => setOpenTaskId(null)} />}
-
-      {quickAddStatus && (
-        <QuickAddModal
-          status={quickAddStatus}
-          profiles={profiles}
-          onClose={() => setQuickAddStatus(null)}
-          onCreated={(t) => { setTasks((prev) => [t, ...prev]); setQuickAddStatus(null); }}
-        />
-      )}
     </div>
   );
 }
@@ -249,25 +243,17 @@ function Stat({ label, value, accent, danger, success }: { label: string; value:
   );
 }
 
-function TaskCard({
-  task, assignee, onOpen, onDragStart, onDragEnd,
-}: { task: Task; assignee?: Profile; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void }) {
+function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
   const pr = PRIORITY_META[task.priority];
   const overdue = isOverdue(task.due_date, task.status);
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
       onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-grab shadow-sm hover:shadow transition-shadow"
+      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
       style={{ borderLeft: `3px solid ${pr.color}` }}
     >
       <div className="text-[13px] font-semibold mb-2">{task.title}</div>
-      <div className="flex items-center gap-2">
-        <span className={`text-[11px] flex items-center gap-1 ${overdue ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(task.due_date)}</span>
-        <div className="ml-auto">{assignee && <Avatar profile={assignee} size={22} />}</div>
-      </div>
+      <span className={`text-[11px] flex items-center gap-1 ${overdue ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(task.due_date)}</span>
     </div>
   );
 }
