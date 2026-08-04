@@ -3,7 +3,7 @@
 //   npx supabase gen types typescript --project-id <ваш-project-id> > src/lib/database.types.ts
 
 export type UserRole = 'administrator' | 'manager' | 'employee' | 'viewer';
-export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done';
+export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done' | 'approved';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type NotificationType = 'assigned' | 'comment' | 'status_change' | 'deadline' | 'mention';
 
