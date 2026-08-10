@@ -126,7 +126,15 @@ export default function TaskPanel({ taskId, profiles, onClose }: { taskId: strin
     if (data?.signedUrl) window.open(data.signedUrl, '_blank');
   }
 
-  function close() { track({ editing: false, typing: false }); onClose(); }
+function close() { track({ editing: false, typing: false }); onClose(); }
+
+  async function deleteTask() {
+    if (!task) return;
+    if (!confirm('Удалить задачу «' + task.title + '»? Это действие необратимо.')) return;
+    const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+    if (error) { alert('Не удалось удалить задачу: ' + error.message); return; }
+    onClose();
+  }
 
   if (!task) {
     return (
