@@ -7,7 +7,7 @@ create extension if not exists "pgcrypto";
 create extension if not exists "pg_cron"; -- для напоминаний о дедлайнах по расписанию
 
 create type user_role as enum ('administrator','manager','employee','viewer');
-create type task_status as enum ('backlog','todo','in_progress','review','done');
+create type task_status as enum ('backlog','todo','in_progress','review','done','approved');
 create type task_priority as enum ('high','medium','low');
 create type notification_type as enum ('assigned','comment','status_change','deadline','mention');
 
@@ -301,7 +301,10 @@ create policy "departments_write_admins" on public.departments for all using (pu
 
 -- одна общая доска — все авторизованные видят все задачи
 create policy "tasks_select_all" on public.tasks for select using (auth.uid() is not null);
-create policy "tasks_insert" on public.tasks for insert with check (public.current_user_role() in ('administrator','manager','employee'));
+create policy "tasks_insert" on public.tasks for insert with check (
+  public.current_user_role() in ('administrator','manager')
+  or assignee_id = auth.uid()
+);
 create policy "tasks_update" on public.tasks for update using (
   public.current_user_role() in ('administrator','manager')
   or assignee_id = auth.uid()
