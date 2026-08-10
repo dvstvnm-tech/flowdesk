@@ -170,7 +170,12 @@ function close() { track({ editing: false, typing: false }); onClose(); }
               ✓ Согласовано
             </button>
           )}
-          <button onClick={close} className="ml-auto text-muted hover:text-text w-8 h-8">✕</button>
+<span className="ml-auto flex items-center gap-1">
+            {(me?.id === task.reporter_id || me?.role === 'manager' || me?.role === 'administrator') && (
+              <button onClick={deleteTask} title="Удалить задачу" className="text-muted hover:text-red w-8 h-8">🗑</button>
+            )}
+            <button onClick={close} className="text-muted hover:text-text w-8 h-8">✕</button>
+          </span>
         </div>
 
         {(editingOthers.length > 0 || typingOthers.length > 0) && (
