@@ -69,7 +69,7 @@ export default function AppShell({ profile, children }: { profile: Profile | nul
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold truncate">{profile ? fullName(profile) || 'Без имени' : '—'}</div>
-              <div className="text-[11px] text-muted truncate">{roleLabel(profile?.role)}</div>
+              <div className="text-[11px] text-muted truncate">{profile?.job_title ?? roleLabel(profile?.role)}</div>
             </div>
             <button onClick={signOut} title="Выйти" className="text-muted hover:text-red text-xs px-1">⎋</button>
           </div>
