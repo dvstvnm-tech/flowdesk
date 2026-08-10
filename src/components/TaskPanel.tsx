@@ -149,10 +149,15 @@ export default function TaskPanel({ taskId, profiles, onClose }: { taskId: strin
           <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: PRIORITY_META[task.priority].color + '22', color: PRIORITY_META[task.priority].color }}>
             {PRIORITY_META[task.priority].label}
           </span>
-          <select value={task.status} onChange={(e) => updateField({ status: e.target.value as Task['status'] })} className="text-xs border border-border rounded-md px-2 py-1 bg-surface2">
+<select value={task.status} onChange={(e) => updateField({ status: e.target.value as Task['status'] })} className="text-xs border border-border rounded-md px-2 py-1 bg-surface2">
             {Object.entries(STATUS_META).filter(([id]) => id !== 'approved').map(([id, m]) => <option key={id} value={id}>{m.label}</option>)}
           </select>
-          {task.status === 'done' && (
+          {task.status !== 'done' && task.status !== 'approved' && (me?.id === task.assignee_id || me?.role === 'manager' || me?.role === 'administrator') && (
+            <button onClick={() => updateField({ status: 'done' })} className="text-xs font-semibold bg-green text-white rounded-md px-2.5 py-1.5">
+              ✓ Выполнено
+            </button>
+          )}
+          {task.status === 'done' && (me?.role === 'manager' || me?.role === 'administrator') && (
             <button onClick={() => updateField({ status: 'approved' })} className="text-xs font-semibold bg-green text-white rounded-md px-2.5 py-1.5">
               ✓ Согласовано
             </button>
