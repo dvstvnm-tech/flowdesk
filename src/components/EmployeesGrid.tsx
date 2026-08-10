@@ -37,7 +37,7 @@ export default function EmployeesGrid({
                   {onlineIds.has(p.id) && <span className="presence-dot absolute -bottom-0.5 -right-0.5" title="Онлайн" />}
                 </div>
                 <div className="font-bold text-sm">{fullName(p) || 'Без имени'}</div>
-                <div className="text-xs text-muted">{ROLE_LABEL[p.role] ?? p.role}</div>
+                <div className="text-xs text-muted">{p.job_title ?? ROLE_LABEL[p.role] ?? p.role}</div>
                 <div className="text-[11px] text-muted mb-2.5">{dept?.name ?? 'Без отдела'}</div>
                 <div className="flex justify-center gap-3.5 text-[11.5px] border-t border-border pt-2.5">
                   <div><b className="block text-sm">{current}</b>текущие</div>
