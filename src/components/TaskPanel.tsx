@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { usePresence } from '@/hooks/usePresence';
-import type { Task, Profile, Comment, Subtask, ActivityLogEntry, Attachment } from '@/lib/database.types';
+import type { Task, Profile, Comment, Subtask, ActivityLogEntry, Attachment, Stage } from '@/lib/database.types';
 import { STATUS_META, PRIORITY_META, formatDate, formatDateTime, fullName } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 
 const EMOJI = ['👍', '🎉', '✅', '🔥', '❤️', '😄'];
+// Статусы, доступные для задачи внутри этапа проекта — согласование проходит на уровне этапа
+const STAGE_TASK_STATUS_IDS = ['todo', 'in_progress', 'done'];
 
-export default function TaskPanel({ taskId, profiles, onClose }: { taskId: string; profiles: Profile[]; onClose: () => void }) {
+export default function TaskPanel({ taskId, profiles, stages, onClose }: { taskId: string; profiles: Profile[]; stages?: Stage[]; onClose: () => void }) {
   const supabase = createClient();
   const { profile: me } = useCurrentUser();
 
@@ -148,24 +150,29 @@ export default function TaskPanel({ taskId, profiles, onClose }: { taskId: strin
   const reporter = profiles.find((p) => p.id === task.reporter_id);
   const taskAttachments = attachments.filter((a) => !a.comment_id);
   const attachmentsByComment = (commentId: string) => attachments.filter((a) => a.comment_id === commentId);
+  const isStageTask = !!task.stage_id;
+  const stage = isStageTask ? stages?.find((s) => s.id === task.stage_id) : null;
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-[1px]" onClick={close}>
       <div className="fixed top-0 right-0 bottom-0 w-[560px] max-w-[94vw] bg-surface shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="p-3.5 border-b border-border flex items-center gap-2">
           <span className="text-xs text-muted font-mono">{task.code}</span>
+          {isStageTask && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-accentSoft text-accent">Этап: {stage ? stage.title : '…'}</span>}
           <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: PRIORITY_META[task.priority].color + '22', color: PRIORITY_META[task.priority].color }}>
             {PRIORITY_META[task.priority].label}
           </span>
           <select value={task.status} onChange={(e) => updateField({ status: e.target.value as Task['status'] })} className="text-xs border border-border rounded-md px-2 py-1 bg-surface2">
-            {Object.entries(STATUS_META).filter(([id]) => id !== 'approved').map(([id, m]) => <option key={id} value={id}>{m.label}</option>)}
+            {Object.entries(STATUS_META)
+              .filter(([id]) => (isStageTask ? STAGE_TASK_STATUS_IDS.includes(id) : id !== 'approved'))
+              .map(([id, m]) => <option key={id} value={id}>{isStageTask ? { todo: 'К выполнению', in_progress: 'В работе', done: 'Выполнено' }[id] : m.label}</option>)}
           </select>
-          {task.status !== 'done' && task.status !== 'approved' && (me?.id === task.assignee_id || me?.role === 'manager' || me?.role === 'administrator') && (
+          {!isStageTask && task.status !== 'done' && task.status !== 'approved' && (me?.id === task.assignee_id || me?.role === 'manager' || me?.role === 'administrator') && (
             <button onClick={() => updateField({ status: 'done' })} className="text-xs font-semibold bg-green text-white rounded-md px-2.5 py-1.5">
               ✓ Выполнено
             </button>
           )}
-          {task.status === 'done' && (me?.role === 'manager' || me?.role === 'administrator') && (
+          {!isStageTask && task.status === 'done' && (me?.role === 'manager' || me?.role === 'administrator') && (
             <button onClick={() => updateField({ status: 'approved' })} className="text-xs font-semibold bg-green text-white rounded-md px-2.5 py-1.5">
               ✓ Согласовано
             </button>

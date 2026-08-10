@@ -3,24 +3,30 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
-import type { Task, Profile, Subtask } from '@/lib/database.types';
+import type { Task, Profile, Project, Stage } from '@/lib/database.types';
 import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 import TaskPanel from '@/components/TaskPanel';
+import ProjectPanel from '@/components/ProjectPanel';
 import QuickAddModal from '@/components/QuickAddModal';
+import ProjectQuickAddModal from '@/components/ProjectQuickAddModal';
 
-// Компактные блоки под каждым сотрудником (без "Проекты" — та рисуется отдельно, во всю ширину)
-const COMPACT_BLOCK_STATUSES = ['review', 'done'] as const;
+// Компактные блоки со статусами "Процедуры" на общей доске (карточка "Проекты" рисуется отдельно)
+const PROCEDURE_STATUS = 'review';
+const PROCEDURE_DONE_STATUS = 'done';
 
 export default function KanbanBoard({
-  initialTasks, profiles, initialSubtasks,
-}: { initialTasks: Task[]; profiles: Profile[]; initialSubtasks: Subtask[] }) {
+  initialTasks, profiles, initialProjects, initialStages,
+}: { initialTasks: Task[]; profiles: Profile[]; initialProjects: Project[]; initialStages: Stage[] }) {
   const supabase = createClient();
   const { profile: me } = useCurrentUser();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
-  const [subtasks, setSubtasks] = useState<Subtask[]>(initialSubtasks);
+  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [stages, setStages] = useState<Stage[]>(initialStages);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const [quickAdd, setQuickAdd] = useState<string | null>(null); // статус, для которого открыта форма
+  const [openProjectId, setOpenProjectId] = useState<string | null>(null);
+  const [quickAdd, setQuickAdd] = useState<string | null>(null); // статус процедуры, для которой открыта форма
+  const [projectQuickAddFor, setProjectQuickAddFor] = useState<string | null>(null); // id сотрудника
 
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -30,7 +36,7 @@ export default function KanbanBoard({
   const [fPriority, setFPriority] = useState('');
   const [fOverdue, setFOverdue] = useState(false);
 
-  // ---- Realtime: вся доска общая — синхронизируем изменения задач у всех пользователей ----
+  // ---- Realtime: задачи (процедуры + задачи внутри этапов) ----
   useEffect(() => {
     const channel = supabase
       .channel('tasks-board')
@@ -54,21 +60,21 @@ export default function KanbanBoard({
     return () => { supabase.removeChannel(channel); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Realtime: подзадачи (мини-блоки под задачами "Проекты") ----
+  // ---- Realtime: проекты ----
   useEffect(() => {
     const channel = supabase
-      .channel('subtasks-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (payload) => {
-        setSubtasks((prev) => {
+      .channel('projects-board')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (payload) => {
+        setProjects((prev) => {
           if (payload.eventType === 'INSERT') {
-            if (prev.some((s) => s.id === (payload.new as Subtask).id)) return prev;
-            return [...prev, payload.new as Subtask];
+            if (prev.some((p) => p.id === (payload.new as Project).id)) return prev;
+            return [payload.new as Project, ...prev];
           }
           if (payload.eventType === 'UPDATE') {
-            return prev.map((s) => (s.id === (payload.new as Subtask).id ? (payload.new as Subtask) : s));
+            return prev.map((p) => (p.id === (payload.new as Project).id ? (payload.new as Project) : p));
           }
           if (payload.eventType === 'DELETE') {
-            return prev.filter((s) => s.id !== (payload.old as Subtask).id);
+            return prev.filter((p) => p.id !== (payload.old as Project).id);
           }
           return prev;
         });
@@ -78,7 +84,31 @@ export default function KanbanBoard({
     return () => { supabase.removeChannel(channel); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Поиск: задачи и сотрудники — локально; комментарии — отдельным запросом к Supabase ----
+  // ---- Realtime: этапы ----
+  useEffect(() => {
+    const channel = supabase
+      .channel('stages-board')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stages' }, (payload) => {
+        setStages((prev) => {
+          if (payload.eventType === 'INSERT') {
+            if (prev.some((s) => s.id === (payload.new as Stage).id)) return prev;
+            return [...prev, payload.new as Stage];
+          }
+          if (payload.eventType === 'UPDATE') {
+            return prev.map((s) => (s.id === (payload.new as Stage).id ? (payload.new as Stage) : s));
+          }
+          if (payload.eventType === 'DELETE') {
+            return prev.filter((s) => s.id !== (payload.old as Stage).id);
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- Поиск: задачи, проекты и сотрудники — локально; комментарии — отдельным запросом ----
   useEffect(() => {
     if (!query.trim()) { setCommentMatches([]); return; }
     const t = setTimeout(async () => {
@@ -91,8 +121,13 @@ export default function KanbanBoard({
   const matchingTasks = useMemo(() => {
     if (!query.trim()) return [];
     const q = query.toLowerCase();
-    return tasks.filter((t) => t.title.toLowerCase().includes(q) || t.code.toLowerCase().includes(q)).slice(0, 6);
+    return tasks.filter((t) => !t.stage_id && (t.title.toLowerCase().includes(q) || t.code.toLowerCase().includes(q))).slice(0, 6);
   }, [query, tasks]);
+  const matchingProjects = useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.toLowerCase();
+    return projects.filter((p) => p.title.toLowerCase().includes(q)).slice(0, 6);
+  }, [query, projects]);
   const matchingProfiles = useMemo(() => {
     if (!query.trim()) return [];
     const q = query.toLowerCase();
@@ -107,27 +142,35 @@ export default function KanbanBoard({
     });
   }, [tasks, fPriority, fOverdue]);
 
-  const subtasksByTask = useMemo(() => {
-    const map = new Map<string, Subtask[]>();
-    subtasks.forEach((s) => {
-      const list = map.get(s.task_id) ?? [];
+  const stagesByProject = useMemo(() => {
+    const map = new Map<string, Stage[]>();
+    stages.forEach((s) => {
+      const list = map.get(s.project_id) ?? [];
       list.push(s);
-      map.set(s.task_id, list);
+      map.set(s.project_id, list);
     });
     map.forEach((list) => list.sort((a, b) => a.position - b.position));
     return map;
-  }, [subtasks]);
+  }, [stages]);
 
-  async function addSubtask(taskId: string, title: string) {
-    const existing = subtasksByTask.get(taskId) ?? [];
-    await supabase.from('subtasks').insert({ task_id: taskId, title, position: existing.length });
-  }
+  const stageTasksByStage = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    tasks.forEach((t) => {
+      if (!t.stage_id) return;
+      const list = map.get(t.stage_id) ?? [];
+      list.push(t);
+      map.set(t.stage_id, list);
+    });
+    return map;
+  }, [tasks]);
 
-  const total = tasks.length;
-  const projectsCount = tasks.filter((t) => t.status === 'backlog').length;
-  const procedures = tasks.filter((t) => t.status === 'review').length;
-  const overdue = tasks.filter((t) => isOverdue(t.due_date, t.status)).length;
-  const done = tasks.filter((t) => t.status === 'done' || t.status === 'approved').length;
+  const total = tasks.filter((t) => !t.stage_id).length;
+  const projectsCount = projects.length;
+  const procedures = tasks.filter((t) => t.status === PROCEDURE_STATUS).length;
+  const overdue = tasks.filter((t) => !t.stage_id && isOverdue(t.due_date, t.status)).length
+    + projects.filter((p) => isOverdue(p.due_date, p.status === 'approved' ? 'done' : 'active')).length;
+  const done = tasks.filter((t) => !t.stage_id && (t.status === 'done' || t.status === 'approved')).length
+    + projects.filter((p) => p.status === 'approved').length;
 
   return (
     <div className="p-6">
@@ -145,12 +188,18 @@ export default function KanbanBoard({
               onChange={(e) => { setQuery(e.target.value); setSearchOpen(!!e.target.value); }}
               onFocus={() => setSearchOpen(!!query)}
               onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
-              placeholder="Поиск задач, сотрудников, комментариев..."
+              placeholder="Поиск задач, проектов, сотрудников..."
               className="bg-transparent outline-none text-[13px] flex-1"
             />
           </div>
-          {searchOpen && (matchingTasks.length > 0 || matchingProfiles.length > 0 || commentMatches.length > 0) && (
+          {searchOpen && (matchingTasks.length > 0 || matchingProjects.length > 0 || matchingProfiles.length > 0 || commentMatches.length > 0) && (
             <div className="absolute top-[42px] right-0 w-[360px] bg-surface border border-border rounded-xl shadow-lg overflow-hidden z-40 max-h-[70vh] overflow-y-auto">
+              {matchingProjects.length > 0 && <SearchGroup label="Проекты" />}
+              {matchingProjects.map((p) => (
+                <div key={p.id} onMouseDown={() => setOpenProjectId(p.id)} className="flex items-center gap-2 px-3.5 py-2 hover:bg-surface2 cursor-pointer text-[13px]">
+                  <span className="w-2 h-2 rounded-full flex-none" style={{ background: '#7C4FE0' }} /> {p.title}
+                </div>
+              ))}
               {matchingTasks.length > 0 && <SearchGroup label="Задачи" />}
               {matchingTasks.map((t) => (
                 <div key={t.id} onMouseDown={() => setOpenTaskId(t.id)} className="flex items-center gap-2 px-3.5 py-2 hover:bg-surface2 cursor-pointer text-[13px]">
@@ -206,17 +255,29 @@ export default function KanbanBoard({
         <EmployeeSection
           key={p.id}
           profile={p}
-          tasks={visibleTasks.filter((t) => t.assignee_id === p.id)}
-          subtasksByTask={subtasksByTask}
+          procedureTasks={visibleTasks.filter((t) => t.assignee_id === p.id && !t.stage_id)}
+          employeeProjects={projects.filter((pr) => pr.assignee_id === p.id)}
+          stagesByProject={stagesByProject}
+          stageTasksByStage={stageTasksByStage}
           isMine={me?.id === p.id}
           onOpenTask={setOpenTaskId}
+          onOpenProject={setOpenProjectId}
           onAdd={(status) => setQuickAdd(status)}
-          onAddSubtask={addSubtask}
+          onAddProject={() => setProjectQuickAddFor(p.id)}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
 
-      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} onClose={() => setOpenTaskId(null)} />}
+      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} stages={stages} onClose={() => setOpenTaskId(null)} />}
+
+      {openProjectId && (
+        <ProjectPanel
+          projectId={openProjectId}
+          profiles={profiles}
+          onClose={() => setOpenProjectId(null)}
+          onOpenTask={setOpenTaskId}
+        />
+      )}
 
       {quickAdd && (
         <QuickAddModal
@@ -226,112 +287,137 @@ export default function KanbanBoard({
           onCreated={(t) => { setTasks((prev) => [t, ...prev]); setQuickAdd(null); }}
         />
       )}
+
+      {projectQuickAddFor && (
+        <ProjectQuickAddModal
+          onClose={() => setProjectQuickAddFor(null)}
+          onCreated={(pr) => { setProjects((prev) => [pr, ...prev]); setProjectQuickAddFor(null); }}
+        />
+      )}
     </div>
   );
 }
 
 function EmployeeSection({
-  profile, tasks, subtasksByTask, isMine, onOpenTask, onAdd, onAddSubtask,
+  profile, procedureTasks, employeeProjects, stagesByProject, stageTasksByStage, isMine, onOpenTask, onOpenProject, onAdd, onAddProject,
 }: {
-  profile: Profile; tasks: Task[]; subtasksByTask: Map<string, Subtask[]>; isMine: boolean;
-  onOpenTask: (id: string) => void; onAdd: (status: string) => void; onAddSubtask: (taskId: string, title: string) => void;
+  profile: Profile; procedureTasks: Task[]; employeeProjects: Project[];
+  stagesByProject: Map<string, Stage[]>; stageTasksByStage: Map<string, Task[]>; isMine: boolean;
+  onOpenTask: (id: string) => void; onOpenProject: (id: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
 }) {
-  const projectTasks = tasks.filter((t) => t.status === 'backlog');
+  const totalCount = procedureTasks.length + employeeProjects.length;
+
+  const proceduresInProgress = procedureTasks.filter((t) => t.status === PROCEDURE_STATUS);
+  const proceduresDone = procedureTasks.filter((t) => t.status === PROCEDURE_DONE_STATUS);
+
+  const stagesOnReview = employeeProjects.flatMap((pr) =>
+    (stagesByProject.get(pr.id) ?? []).filter((s) => s.status === 'on_review').map((s) => ({ stage: s, project: pr }))
+  );
+
   return (
     <div className="mb-7">
       <div className="flex items-center gap-2.5 mb-2.5">
         <Avatar profile={profile} size={30} />
         <span className="font-bold text-[14.5px]">{fullName(profile) || profile.email}</span>
-        <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{tasks.length} задач</span>
+        <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{totalCount} задач</span>
       </div>
 
-      <div className="bg-surface2 border border-border rounded-2xl p-2.5 mb-2.5">
-        <div className="flex items-center gap-2 px-1.5 pb-2.5">
-          <span className="w-2 h-2 rounded-full" style={{ background: STATUS_META.backlog.color }} />
-          <span className="font-bold text-[12px]">{STATUS_META.backlog.label}</span>
-          <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{projectTasks.length}</span>
-          {isMine && <button onClick={() => onAdd('backlog')} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
-        </div>
-        <div className="flex flex-col gap-2">
-          {projectTasks.map((t) => (
-            <div key={t.id} className="flex items-start gap-2 flex-wrap">
-              <TaskCard task={t} onOpen={() => onOpenTask(t.id)} />
-              {(subtasksByTask.get(t.id) ?? []).map((s, i) => (
-                <SubtaskChip key={s.id} index={i + 1} subtask={s} onOpen={() => onOpenTask(t.id)} />
-              ))}
-              {isMine && <InlineAddSubtask taskId={t.id} nextIndex={(subtasksByTask.get(t.id) ?? []).length + 1} onAdd={onAddSubtask} />}
-            </div>
-          ))}
-          {projectTasks.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
-        </div>
-      </div>
+      <div className="grid grid-cols-3 gap-2.5">
 
-      <div className="grid grid-cols-2 gap-2.5">
-        {COMPACT_BLOCK_STATUSES.map((status) => {
-          const meta = STATUS_META[status];
-          const blockTasks = tasks.filter((t) => t.status === status);
-          return (
-            <div key={status} className="bg-surface2 border border-border rounded-2xl p-2.5">
-              <div className="flex items-center gap-2 px-1.5 pb-2.5">
-                <span className="w-2 h-2 rounded-full" style={{ background: meta.color }} />
-                <span className="font-bold text-[12px]">{meta.label}</span>
-                <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{blockTasks.length}</span>
-                {isMine && <button onClick={() => onAdd(status)} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
-              </div>
-              <div className="flex flex-col gap-2 min-h-[20px]">
-                {blockTasks.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
-                {blockTasks.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
-              </div>
-            </div>
-          );
-        })}
+        {/* ---- Проекты ---- */}
+        <div className="bg-surface2 border border-border rounded-2xl p-2.5">
+          <div className="flex items-center gap-2 px-1.5 pb-2.5">
+            <span className="w-2 h-2 rounded-full" style={{ background: '#7C4FE0' }} />
+            <span className="font-bold text-[12px]">Проекты</span>
+            <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{employeeProjects.length}</span>
+            {isMine && <button onClick={onAddProject} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
+          </div>
+          <div className="flex flex-col gap-2 min-h-[20px]">
+            {employeeProjects.map((pr) => (
+              <ProjectCard
+                key={pr.id}
+                project={pr}
+                stageCount={(stagesByProject.get(pr.id) ?? []).length}
+                onOpen={() => onOpenProject(pr.id)}
+              />
+            ))}
+            {employeeProjects.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
+          </div>
+        </div>
+
+        {/* ---- Процедуры ---- */}
+        <div className="bg-surface2 border border-border rounded-2xl p-2.5">
+          <div className="flex items-center gap-2 px-1.5 pb-2.5">
+            <span className="w-2 h-2 rounded-full" style={{ background: STATUS_META.review.color }} />
+            <span className="font-bold text-[12px]">Процедуры</span>
+            <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{proceduresInProgress.length}</span>
+            {isMine && <button onClick={() => onAdd(PROCEDURE_STATUS)} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
+          </div>
+          <div className="flex flex-col gap-2 min-h-[20px]">
+            {proceduresInProgress.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
+            {proceduresInProgress.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
+          </div>
+        </div>
+
+        {/* ---- На согласование ---- */}
+        <div className="bg-surface2 border border-border rounded-2xl p-2.5">
+          <div className="flex items-center gap-2 px-1.5 pb-2.5">
+            <span className="w-2 h-2 rounded-full" style={{ background: STATUS_META.done.color }} />
+            <span className="font-bold text-[12px]">На согласование</span>
+            <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{proceduresDone.length + stagesOnReview.length}</span>
+          </div>
+          <div className="flex flex-col gap-2 min-h-[20px]">
+            {stagesOnReview.map(({ stage, project }) => (
+              <ReviewCard key={stage.id} title={stage.title} subtitle={`проект «${project.title}»`} onOpen={() => onOpenProject(project.id)} />
+            ))}
+            {proceduresDone.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
+            {proceduresDone.length === 0 && stagesOnReview.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
+          </div>
+        </div>
+
       </div>
     </div>
   );
 }
 
-function SubtaskChip({ index, subtask, onOpen }: { index: number; subtask: Subtask; onOpen: () => void }) {
+function ProjectCard({ project, stageCount, onOpen }: { project: Project; stageCount: number; onOpen: () => void }) {
+  const approved = project.status === 'approved';
   return (
-    <button
+    <div
       onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2 text-left w-[150px] flex-none"
+      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
+      style={{ borderLeft: `3px solid ${approved ? 'var(--green)' : '#7C4FE0'}` }}
     >
-      <p className="text-[11px] text-muted mb-1">Подзадача {index}</p>
-      <p className={`text-[12.5px] ${subtask.is_done ? 'line-through text-muted' : ''}`}>{subtask.title}</p>
-    </button>
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-[13px] font-semibold">{project.title}</div>
+        {approved && <span className="text-[11px] font-bold text-green flex-none">✓</span>}
+      </div>
+      <div className="flex items-center justify-between mt-2">
+        <span className={`text-[11px] flex items-center gap-1 ${isOverdue(project.due_date, approved ? 'done' : 'active') ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(project.due_date)}</span>
+        <span className="text-[11px] text-muted bg-surface2 border border-border rounded-full px-1.5">{stageCount} {pluralStages(stageCount)}</span>
+      </div>
+    </div>
   );
 }
 
-function InlineAddSubtask({ taskId, nextIndex, onAdd }: { taskId: string; nextIndex: number; onAdd: (taskId: string, title: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [value, setValue] = useState('');
-
-  function submit() {
-    if (!value.trim()) { setOpen(false); return; }
-    onAdd(taskId, value.trim());
-    setValue('');
-    setOpen(false);
-  }
-
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} className="w-9 h-9 flex-none self-center text-muted hover:text-accent border border-border rounded-full text-sm">+</button>
-    );
-  }
+function ReviewCard({ title, subtitle, onOpen }: { title: string; subtitle: string; onOpen: () => void }) {
   return (
-    <div className="bg-surface border border-border rounded-[10px] p-2 w-[150px] flex-none">
-      <p className="text-[11px] text-muted mb-1">Подзадача {nextIndex}</p>
-      <input
-        autoFocus
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setOpen(false); }}
-        onBlur={submit}
-        placeholder="Текст…"
-        className="w-full bg-transparent outline-none text-[12.5px]"
-      />
+    <div
+      onClick={onOpen}
+      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
+      style={{ borderLeft: '3px solid var(--accent)' }}
+    >
+      <div className="text-[13px] font-semibold mb-1">{title}</div>
+      <div className="text-[11px] text-muted">{subtitle}</div>
     </div>
   );
+}
+
+function pluralStages(n: number): string {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'этап';
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return 'этапа';
+  return 'этапов';
 }
 
 function SearchGroup({ label }: { label: string }) {
@@ -364,7 +450,7 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
   return (
     <div
       onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow w-[190px] flex-none"
+      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
       style={{ borderLeft: `3px solid ${pr.color}` }}
     >
       <div className="text-[13px] font-semibold mb-2">{task.title}</div>
