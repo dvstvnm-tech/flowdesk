@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import type { Task, Profile, Project, Stage } from '@/lib/database.types';
 import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 import TaskPanel from '@/components/TaskPanel';
-import ProjectPanel from '@/components/ProjectPanel';
 import QuickAddModal from '@/components/QuickAddModal';
 import ProjectQuickAddModal from '@/components/ProjectQuickAddModal';
 
@@ -19,14 +19,18 @@ export default function KanbanBoard({
   initialTasks, profiles, initialProjects, initialStages,
 }: { initialTasks: Task[]; profiles: Profile[]; initialProjects: Project[]; initialStages: Stage[] }) {
   const supabase = createClient();
+  const router = useRouter();
   const { profile: me } = useCurrentUser();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
   const [stages, setStages] = useState<Stage[]>(initialStages);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const [openProjectId, setOpenProjectId] = useState<string | null>(null);
   const [quickAdd, setQuickAdd] = useState<string | null>(null); // статус процедуры, для которой открыта форма
   const [projectQuickAddFor, setProjectQuickAddFor] = useState<string | null>(null); // id сотрудника
+
+  function openProject(id: string, stageId?: string) {
+    router.push(`/projects/${id}${stageId ? `?stage=${stageId}` : ''}`);
+  }
 
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -196,7 +200,7 @@ export default function KanbanBoard({
             <div className="absolute top-[42px] right-0 w-[360px] bg-surface border border-border rounded-xl shadow-lg overflow-hidden z-40 max-h-[70vh] overflow-y-auto">
               {matchingProjects.length > 0 && <SearchGroup label="Проекты" />}
               {matchingProjects.map((p) => (
-                <div key={p.id} onMouseDown={() => setOpenProjectId(p.id)} className="flex items-center gap-2 px-3.5 py-2 hover:bg-surface2 cursor-pointer text-[13px]">
+                <div key={p.id} onMouseDown={() => openProject(p.id)} className="flex items-center gap-2 px-3.5 py-2 hover:bg-surface2 cursor-pointer text-[13px]">
                   <span className="w-2 h-2 rounded-full flex-none" style={{ background: '#7C4FE0' }} /> {p.title}
                 </div>
               ))}
@@ -261,7 +265,7 @@ export default function KanbanBoard({
           stageTasksByStage={stageTasksByStage}
           isMine={me?.id === p.id}
           onOpenTask={setOpenTaskId}
-          onOpenProject={setOpenProjectId}
+          onOpenProject={openProject}
           onAdd={(status) => setQuickAdd(status)}
           onAddProject={() => setProjectQuickAddFor(p.id)}
         />
@@ -269,15 +273,6 @@ export default function KanbanBoard({
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
 
       {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} stages={stages} onClose={() => setOpenTaskId(null)} />}
-
-      {openProjectId && (
-        <ProjectPanel
-          projectId={openProjectId}
-          profiles={profiles}
-          onClose={() => setOpenProjectId(null)}
-          onOpenTask={setOpenTaskId}
-        />
-      )}
 
       {quickAdd && (
         <QuickAddModal
@@ -303,7 +298,7 @@ function EmployeeSection({
 }: {
   profile: Profile; procedureTasks: Task[]; employeeProjects: Project[];
   stagesByProject: Map<string, Stage[]>; stageTasksByStage: Map<string, Task[]>; isMine: boolean;
-  onOpenTask: (id: string) => void; onOpenProject: (id: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
+  onOpenTask: (id: string) => void; onOpenProject: (id: string, stageId?: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
 }) {
   const totalCount = procedureTasks.length + employeeProjects.length;
 
@@ -368,7 +363,7 @@ function EmployeeSection({
           </div>
           <div className="flex flex-col gap-2 min-h-[20px]">
             {stagesOnReview.map(({ stage, project }) => (
-              <ReviewCard key={stage.id} title={stage.title} subtitle={`проект «${project.title}»`} onOpen={() => onOpenProject(project.id)} />
+              <ReviewCard key={stage.id} title={stage.title} subtitle={`проект «${project.title}»`} onOpen={() => onOpenProject(project.id, stage.id)} />
             ))}
             {proceduresDone.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
             {proceduresDone.length === 0 && stagesOnReview.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
