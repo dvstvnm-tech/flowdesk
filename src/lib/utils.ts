@@ -36,6 +36,15 @@ export const STATUS_META: Record<string, { label: string; color: string }> = {
   approved: { label: 'Согласовано', color: '#16A34A' },
 };
 export const STATUS_ORDER = ['backlog', 'review', 'done'];
+export const PROJECT_STATUS_META: Record<string, { label: string; color: string }> = {
+  active: { label: 'В работе', color: '#7C4FE0' },
+  approved: { label: 'Согласовано', color: '#16A34A' },
+};
+export const STAGE_STATUS_META: Record<string, { label: string; color: string }> = {
+  in_progress: { label: 'В работе', color: '#C77C0A' },
+  on_review: { label: 'На согласовании', color: '#2F5FE0' },
+  approved: { label: 'Согласовано', color: '#16A34A' },
+};
 export function fullName(p: { first_name?: string; last_name?: string } | null | undefined): string {
   if (!p) return '';
   return `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim();
