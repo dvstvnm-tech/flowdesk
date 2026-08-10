@@ -7,6 +7,7 @@ import { Avatar } from '@/components/AppShell';
 import type { Department } from '@/lib/database.types';
 
 const ROLE_LABEL: Record<string, string> = { administrator: 'Администратор', manager: 'Руководитель', employee: 'Сотрудник', viewer: 'Наблюдатель' };
+const JOB_TITLES = ['Специалист', 'Начальник', 'Директор'] as const;
 
 export default function SettingsPage() {
   const supabase = createClient();
@@ -15,6 +16,7 @@ export default function SettingsPage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+  const [jobTitle, setJobTitle] = useState('Специалист');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -22,8 +24,8 @@ export default function SettingsPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (profile) setDepartmentId(profile.department_id ?? '');
-  }, [profile?.department_id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (profile) { setDepartmentId(profile.department_id ?? ''); setJobTitle(profile.job_title ?? 'Специалист'); }
+  }, [profile?.department_id, profile?.job_title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <div className="p-6 text-muted text-sm">Загрузка…</div>;
   if (!profile) return null;
@@ -33,6 +35,7 @@ export default function SettingsPage() {
       first_name: firstName || profile!.first_name,
       last_name: lastName || profile!.last_name,
       department_id: departmentId || null,
+      job_title: jobTitle,
     }).eq('id', profile!.id);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -60,6 +63,12 @@ export default function SettingsPage() {
         <option value="">Не указан</option>
         {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
       </select>
+
+      <label className="text-xs font-semibold text-text2 block mb-1">Должность</label>
+      <select value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm mb-3">
+        {JOB_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+      <p className="text-[11px] text-muted mb-1 -mt-2">Отображается вместо роли на доске и в списке сотрудников.</p>
 
       <label className="text-xs font-semibold text-text2 block mb-1">Роль</label>
       <input value={ROLE_LABEL[profile.role] ?? profile.role} disabled className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm mb-1 opacity-60" />
