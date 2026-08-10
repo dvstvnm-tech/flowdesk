@@ -28,14 +28,14 @@ export const PRIORITY_META: Record<string, { label: string; color: string }> = {
   low: { label: 'Низкий', color: '#868C97' },
 };
 export const STATUS_META: Record<string, { label: string; color: string }> = {
-  backlog: { label: 'Глобальные задачи KPI', color: '#868C97' },
+  backlog: { label: 'Проекты', color: '#7C4FE0' },
   todo: { label: 'К выполнению', color: '#2F5FE0' },
   in_progress: { label: 'Текущие задачи', color: '#C77C0A' },
-review: { label: 'Проекты + ВНД', color: '#7C4FE0' },
+  review: { label: 'Процедуры', color: '#868C97' },
   done: { label: 'На согласование', color: '#2F5FE0' },
   approved: { label: 'Согласовано', color: '#16A34A' },
 };
-export const STATUS_ORDER = ['backlog', 'in_progress', 'review', 'done'];
+export const STATUS_ORDER = ['backlog', 'review', 'done'];
 export function fullName(p: { first_name?: string; last_name?: string } | null | undefined): string {
   if (!p) return '';
   return `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim();

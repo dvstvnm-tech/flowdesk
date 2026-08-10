@@ -3,19 +3,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
-import type { Task, Profile } from '@/lib/database.types';
+import type { Task, Profile, Subtask } from '@/lib/database.types';
 import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 import TaskPanel from '@/components/TaskPanel';
 import QuickAddModal from '@/components/QuickAddModal';
 
-// Блоки, которые показываем под каждым сотрудником, в этом порядке
-const EMPLOYEE_BLOCK_STATUSES = ['backlog', 'in_progress', 'review', 'done'] as const;
+// Компактные блоки под каждым сотрудником (без "Проекты" — та рисуется отдельно, во всю ширину)
+const COMPACT_BLOCK_STATUSES = ['review', 'done'] as const;
 
-export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: Task[]; profiles: Profile[] }) {
+export default function KanbanBoard({
+  initialTasks, profiles, initialSubtasks,
+}: { initialTasks: Task[]; profiles: Profile[]; initialSubtasks: Subtask[] }) {
   const supabase = createClient();
   const { profile: me } = useCurrentUser();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [subtasks, setSubtasks] = useState<Subtask[]>(initialSubtasks);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [quickAdd, setQuickAdd] = useState<string | null>(null); // статус, для которого открыта форма
 
@@ -42,6 +45,30 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
           }
           if (payload.eventType === 'DELETE') {
             return prev.filter((t) => t.id !== (payload.old as Task).id);
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- Realtime: подзадачи (мини-блоки под задачами "Проекты") ----
+  useEffect(() => {
+    const channel = supabase
+      .channel('subtasks-board')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, (payload) => {
+        setSubtasks((prev) => {
+          if (payload.eventType === 'INSERT') {
+            if (prev.some((s) => s.id === (payload.new as Subtask).id)) return prev;
+            return [...prev, payload.new as Subtask];
+          }
+          if (payload.eventType === 'UPDATE') {
+            return prev.map((s) => (s.id === (payload.new as Subtask).id ? (payload.new as Subtask) : s));
+          }
+          if (payload.eventType === 'DELETE') {
+            return prev.filter((s) => s.id !== (payload.old as Subtask).id);
           }
           return prev;
         });
@@ -80,9 +107,25 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
     });
   }, [tasks, fPriority, fOverdue]);
 
+  const subtasksByTask = useMemo(() => {
+    const map = new Map<string, Subtask[]>();
+    subtasks.forEach((s) => {
+      const list = map.get(s.task_id) ?? [];
+      list.push(s);
+      map.set(s.task_id, list);
+    });
+    map.forEach((list) => list.sort((a, b) => a.position - b.position));
+    return map;
+  }, [subtasks]);
+
+  async function addSubtask(taskId: string, title: string) {
+    const existing = subtasksByTask.get(taskId) ?? [];
+    await supabase.from('subtasks').insert({ task_id: taskId, title, position: existing.length });
+  }
+
   const total = tasks.length;
-  const inProgress = tasks.filter((t) => t.status === 'in_progress').length;
-  const review = tasks.filter((t) => t.status === 'review').length;
+  const projectsCount = tasks.filter((t) => t.status === 'backlog').length;
+  const procedures = tasks.filter((t) => t.status === 'review').length;
   const overdue = tasks.filter((t) => isOverdue(t.due_date, t.status)).length;
   const done = tasks.filter((t) => t.status === 'done' || t.status === 'approved').length;
 
@@ -133,8 +176,8 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
 
       <div className="grid grid-cols-5 gap-2.5 mb-4">
         <Stat label="Всего задач" value={total} />
-        <Stat label="Текущие задачи" value={inProgress} accent />
-        <Stat label="Проекты" value={review} />
+        <Stat label="Проекты" value={projectsCount} accent />
+        <Stat label="Процедуры" value={procedures} />
         <Stat label="Просрочено" value={overdue} danger />
         <Stat label="Завершено" value={done} success />
       </div>
@@ -164,9 +207,11 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
           key={p.id}
           profile={p}
           tasks={visibleTasks.filter((t) => t.assignee_id === p.id)}
+          subtasksByTask={subtasksByTask}
           isMine={me?.id === p.id}
           onOpenTask={setOpenTaskId}
           onAdd={(status) => setQuickAdd(status)}
+          onAddSubtask={addSubtask}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
@@ -186,8 +231,12 @@ export default function KanbanBoard({ initialTasks, profiles }: { initialTasks: 
 }
 
 function EmployeeSection({
-  profile, tasks, isMine, onOpenTask, onAdd,
-}: { profile: Profile; tasks: Task[]; isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void }) {
+  profile, tasks, subtasksByTask, isMine, onOpenTask, onAdd, onAddSubtask,
+}: {
+  profile: Profile; tasks: Task[]; subtasksByTask: Map<string, Subtask[]>; isMine: boolean;
+  onOpenTask: (id: string) => void; onAdd: (status: string) => void; onAddSubtask: (taskId: string, title: string) => void;
+}) {
+  const projectTasks = tasks.filter((t) => t.status === 'backlog');
   return (
     <div className="mb-7">
       <div className="flex items-center gap-2.5 mb-2.5">
@@ -195,8 +244,30 @@ function EmployeeSection({
         <span className="font-bold text-[14.5px]">{fullName(profile) || profile.email}</span>
         <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{tasks.length} задач</span>
       </div>
-      <div className="grid grid-cols-4 gap-2.5">
-        {EMPLOYEE_BLOCK_STATUSES.map((status) => {
+
+      <div className="bg-surface2 border border-border rounded-2xl p-2.5 mb-2.5">
+        <div className="flex items-center gap-2 px-1.5 pb-2.5">
+          <span className="w-2 h-2 rounded-full" style={{ background: STATUS_META.backlog.color }} />
+          <span className="font-bold text-[12px]">{STATUS_META.backlog.label}</span>
+          <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{projectTasks.length}</span>
+          {isMine && <button onClick={() => onAdd('backlog')} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
+        </div>
+        <div className="flex flex-col gap-2">
+          {projectTasks.map((t) => (
+            <div key={t.id} className="flex items-start gap-2 flex-wrap">
+              <TaskCard task={t} onOpen={() => onOpenTask(t.id)} />
+              {(subtasksByTask.get(t.id) ?? []).map((s, i) => (
+                <SubtaskChip key={s.id} index={i + 1} subtask={s} onOpen={() => onOpenTask(t.id)} />
+              ))}
+              {isMine && <InlineAddSubtask taskId={t.id} nextIndex={(subtasksByTask.get(t.id) ?? []).length + 1} onAdd={onAddSubtask} />}
+            </div>
+          ))}
+          {projectTasks.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2.5">
+        {COMPACT_BLOCK_STATUSES.map((status) => {
           const meta = STATUS_META[status];
           const blockTasks = tasks.filter((t) => t.status === status);
           return (
@@ -215,6 +286,50 @@ function EmployeeSection({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function SubtaskChip({ index, subtask, onOpen }: { index: number; subtask: Subtask; onOpen: () => void }) {
+  return (
+    <button
+      onClick={onOpen}
+      className="bg-surface border border-border rounded-[10px] p-2 text-left w-[150px] flex-none"
+    >
+      <p className="text-[11px] text-muted mb-1">Подзадача {index}</p>
+      <p className={`text-[12.5px] ${subtask.is_done ? 'line-through text-muted' : ''}`}>{subtask.title}</p>
+    </button>
+  );
+}
+
+function InlineAddSubtask({ taskId, nextIndex, onAdd }: { taskId: string; nextIndex: number; onAdd: (taskId: string, title: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState('');
+
+  function submit() {
+    if (!value.trim()) { setOpen(false); return; }
+    onAdd(taskId, value.trim());
+    setValue('');
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="w-9 h-9 flex-none self-center text-muted hover:text-accent border border-border rounded-full text-sm">+</button>
+    );
+  }
+  return (
+    <div className="bg-surface border border-border rounded-[10px] p-2 w-[150px] flex-none">
+      <p className="text-[11px] text-muted mb-1">Подзадача {nextIndex}</p>
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setOpen(false); }}
+        onBlur={submit}
+        placeholder="Текст…"
+        className="w-full bg-transparent outline-none text-[12.5px]"
+      />
     </div>
   );
 }
@@ -249,7 +364,7 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
   return (
     <div
       onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
+      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow w-[190px] flex-none"
       style={{ borderLeft: `3px solid ${pr.color}` }}
     >
       <div className="text-[13px] font-semibold mb-2">{task.title}</div>
