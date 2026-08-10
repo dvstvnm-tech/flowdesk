@@ -31,7 +31,7 @@ export const STATUS_META: Record<string, { label: string; color: string }> = {
   backlog: { label: 'Глобальные задачи KPI', color: '#868C97' },
   todo: { label: 'К выполнению', color: '#2F5FE0' },
   in_progress: { label: 'Текущие задачи', color: '#C77C0A' },
-  review: { label: 'Проекты', color: '#7C4FE0' },
+review: { label: 'Проекты + ВНД', color: '#7C4FE0' },
   done: { label: 'На согласование', color: '#2F5FE0' },
   approved: { label: 'Согласовано', color: '#16A34A' },
 };
