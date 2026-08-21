@@ -125,6 +125,20 @@ export default function KanbanBoard({
     return { pct: (list.filter((t) => t.is_done).length / list.length) * 100, total: list.length };
   }
 
+  async function deleteTask(task: Task) {
+    if (!confirm('Удалить задачу «' + task.title + '»? Это действие необратимо.')) return;
+    setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+    if (error) alert('Не удалось удалить задачу: ' + error.message);
+  }
+
+  async function deleteProject(project: Project) {
+    if (!confirm('Удалить проект «' + project.title + '» вместе со всеми этапами и подзадачами? Это действие необратимо.')) return;
+    setProjects((prev) => prev.filter((p) => p.id !== project.id));
+    const { error } = await supabase.from('projects').delete().eq('id', project.id);
+    if (error) alert('Не удалось удалить проект: ' + error.message);
+  }
+
   const total = tasks.length;
   const review = tasks.filter((t) => t.status === 'review').length;
   const overdue = tasks.filter((t) => isOverdue(t.due_date, t.status)).length;
@@ -213,6 +227,8 @@ export default function KanbanBoard({
           onOpenTask={setOpenTaskId}
           onAdd={(status) => setQuickAdd(status)}
           onAddProject={() => setAddingProject(true)}
+          onDeleteTask={deleteTask}
+          onDeleteProject={deleteProject}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
@@ -239,11 +255,12 @@ export default function KanbanBoard({
 }
 
 function EmployeeSection({
-  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject,
+  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject, onDeleteTask, onDeleteProject,
 }: {
   profile: Profile; tasks: Task[]; projects: Project[];
   projectProgress: (id: string) => { pct: number; total: number };
   isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
+  onDeleteTask: (task: Task) => void; onDeleteProject: (project: Project) => void;
 }) {
   return (
     <div className="mb-7">
@@ -254,17 +271,19 @@ function EmployeeSection({
       </div>
       <div className="grid grid-cols-3 gap-2.5">
         <Block color={BLOCK_COLORS.projects} label="Проекты" subtitle={BLOCK_SUBTITLES.projects} count={projects.length} isMine={isMine} onAdd={isMine ? onAddProject : undefined}>
-          <MonthGroupedProjects projects={projects} projectProgress={projectProgress} />
+          <MonthGroupedProjects projects={projects} projectProgress={projectProgress} isMine={isMine} onDelete={onDeleteProject} />
           {projects.length === 0 && <Empty />}
         </Block>
 
         <Block color={BLOCK_COLORS.review} label={STATUS_META.review.label} subtitle={BLOCK_SUBTITLES.review} count={tasks.filter((t) => t.status === 'review').length} isMine={isMine} onAdd={() => onAdd('review')}>
-          <MonthGroupedTasks tasks={tasks.filter((t) => t.status === 'review')} onOpenTask={onOpenTask} />
+          <MonthGroupedTasks tasks={tasks.filter((t) => t.status === 'review')} onOpenTask={onOpenTask} isMine={isMine} onDelete={onDeleteTask} />
           {tasks.filter((t) => t.status === 'review').length === 0 && <Empty />}
         </Block>
 
         <Block color={BLOCK_COLORS.done} label={STATUS_META.done.label} subtitle={BLOCK_SUBTITLES.done} count={tasks.filter((t) => t.status === 'done').length} isMine={isMine} onAdd={() => onAdd('done')}>
-          {tasks.filter((t) => t.status === 'done').map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} showApprovalBadge />)}
+          {tasks.filter((t) => t.status === 'done').map((t) => (
+            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} showApprovalBadge isMine={isMine} onDelete={() => onDeleteTask(t)} />
+          ))}
           {tasks.filter((t) => t.status === 'done').length === 0 && <Empty />}
         </Block>
       </div>
@@ -294,8 +313,8 @@ function Empty() {
 }
 
 function MonthGroupedProjects({
-  projects, projectProgress,
-}: { projects: Project[]; projectProgress: (id: string) => { pct: number; total: number } }) {
+  projects, projectProgress, isMine, onDelete,
+}: { projects: Project[]; projectProgress: (id: string) => { pct: number; total: number }; isMine: boolean; onDelete: (project: Project) => void }) {
   const keys = sortMonthKeys(Array.from(new Set(projects.map((p) => p.due_month ?? null))));
   return (
     <>
@@ -304,7 +323,7 @@ function MonthGroupedProjects({
           <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">{monthLabel(key)}</div>
           {projects.filter((p) => (p.due_month ?? null) === key).map((pr) => {
             const { pct, total } = projectProgress(pr.id);
-            return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} />;
+            return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} isMine={isMine} onDelete={() => onDelete(pr)} />;
           })}
         </div>
       ))}
@@ -312,7 +331,9 @@ function MonthGroupedProjects({
   );
 }
 
-function MonthGroupedTasks({ tasks, onOpenTask }: { tasks: Task[]; onOpenTask: (id: string) => void }) {
+function MonthGroupedTasks({
+  tasks, onOpenTask, isMine, onDelete,
+}: { tasks: Task[]; onOpenTask: (id: string) => void; isMine: boolean; onDelete: (task: Task) => void }) {
   const keys = sortMonthKeys(Array.from(new Set(tasks.map((t) => t.due_month ?? null))));
   return (
     <>
@@ -320,7 +341,7 @@ function MonthGroupedTasks({ tasks, onOpenTask }: { tasks: Task[]; onOpenTask: (
         <div key={key ?? 'none'} className="flex flex-col gap-2">
           <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">{monthLabel(key)}</div>
           {tasks.filter((t) => (t.due_month ?? null) === key).map((t) => (
-            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />
+            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} isMine={isMine} onDelete={() => onDelete(t)} />
           ))}
         </div>
       ))}
@@ -328,14 +349,23 @@ function MonthGroupedTasks({ tasks, onOpenTask }: { tasks: Task[]; onOpenTask: (
   );
 }
 
-function ProjectCard({ project, pct, subtaskCount }: { project: Project; pct: number; subtaskCount: number }) {
+function ProjectCard({
+  project, pct, subtaskCount, isMine, onDelete,
+}: { project: Project; pct: number; subtaskCount: number; isMine?: boolean; onDelete?: () => void }) {
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="bg-surface border border-border rounded-[10px] p-2.5 block shadow-sm hover:shadow transition-shadow"
+      className="bg-surface border border-border rounded-[10px] p-2.5 block shadow-sm hover:shadow transition-shadow relative group"
     >
       <div className="flex items-start gap-1.5 mb-2.5">
-        <div className="text-[13px] font-semibold flex-1">{project.title}</div>
+        <div className="text-[13px] font-semibold flex-1 pr-4">{project.title}</div>
+        {isMine && onDelete && (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+            title="Удалить проект"
+            className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-md text-muted hover:text-red hover:bg-red/10 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+          >✕</button>
+        )}
         <span className="text-muted text-xs flex-none">↗</span>
       </div>
       <div className="flex items-center gap-2 mb-2.5">
@@ -374,16 +404,25 @@ function Stat({ label, value, accent, danger, success }: { label: string; value:
   );
 }
 
-function TaskCard({ task, onOpen, showApprovalBadge }: { task: Task; onOpen: () => void; showApprovalBadge?: boolean }) {
+function TaskCard({
+  task, onOpen, showApprovalBadge, isMine, onDelete,
+}: { task: Task; onOpen: () => void; showApprovalBadge?: boolean; isMine?: boolean; onDelete?: () => void }) {
   const pr = PRIORITY_META[task.priority];
   const overdue = isOverdue(task.due_date, task.status);
   return (
     <div
       onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
+      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow relative group"
       style={{ borderLeft: `3px solid ${pr.color}` }}
     >
-      <div className="text-[13px] font-semibold mb-2">{task.title}</div>
+      {isMine && onDelete && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title="Удалить задачу"
+          className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-md text-muted hover:text-red hover:bg-red/10 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+        >✕</button>
+      )}
+      <div className="text-[13px] font-semibold mb-2 pr-5">{task.title}</div>
       <div className="flex items-center gap-2 flex-wrap">
         {task.due_month ? (
           <span className="text-[11px] flex items-center gap-1 text-muted">📅 {monthLabel(task.due_month)}</span>
