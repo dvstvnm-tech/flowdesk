@@ -254,10 +254,7 @@ function EmployeeSection({
       </div>
       <div className="grid grid-cols-3 gap-2.5">
         <Block color={BLOCK_COLORS.projects} label="Проекты" subtitle={BLOCK_SUBTITLES.projects} count={projects.length} isMine={isMine} onAdd={isMine ? onAddProject : undefined}>
-          {projects.map((pr) => {
-            const { pct, total } = projectProgress(pr.id);
-            return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} />;
-          })}
+          <MonthGroupedProjects projects={projects} projectProgress={projectProgress} />
           {projects.length === 0 && <Empty />}
         </Block>
 
@@ -294,6 +291,25 @@ function Block({
 
 function Empty() {
   return <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>;
+}
+
+function MonthGroupedProjects({
+  projects, projectProgress,
+}: { projects: Project[]; projectProgress: (id: string) => { pct: number; total: number } }) {
+  const keys = sortMonthKeys(Array.from(new Set(projects.map((p) => p.due_month ?? null))));
+  return (
+    <>
+      {keys.map((key) => (
+        <div key={key ?? 'none'} className="flex flex-col gap-2">
+          <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">{monthLabel(key)}</div>
+          {projects.filter((p) => (p.due_month ?? null) === key).map((pr) => {
+            const { pct, total } = projectProgress(pr.id);
+            return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} />;
+          })}
+        </div>
+      ))}
+    </>
+  );
 }
 
 function MonthGroupedTasks({ tasks, onOpenTask }: { tasks: Task[]; onOpenTask: (id: string) => void }) {

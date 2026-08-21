@@ -1,16 +1,20 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { Project, ProjectStage, ProjectTask } from '@/lib/database.types';
 import ProgressBar from '@/components/ProgressBar';
 import InlineEditText from '@/components/InlineEditText';
 import MonthSelect from '@/components/MonthSelect';
 
+// Единый стиль для всех полей ввода на странице проекта
+const FIELD = 'w-full border border-border bg-surface2 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-colors';
+
 export default function ProjectDetail({
   project, initialStages, initialTasks,
 }: { project: Project; initialStages: ProjectStage[]; initialTasks: ProjectTask[] }) {
   const supabase = createClient();
+  const router = useRouter();
   const [proj, setProj] = useState<Project>(project);
   const [stages, setStages] = useState<ProjectStage[]>(initialStages);
   const [tasks, setTasks] = useState<ProjectTask[]>(initialTasks);
@@ -120,46 +124,55 @@ export default function ProjectDetail({
   }
 
   return (
-    <div className="p-6">
-      <Link href="/projects" className="inline-block text-sm text-muted hover:text-text mb-3.5">← Все проекты</Link>
-      <div className="mb-5">
+    <div className="p-6 max-w-[1100px]">
+      <button
+        onClick={() => router.push('/board')}
+        className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-text mb-4 transition-colors"
+      >
+        <span aria-hidden>←</span> Доска
+      </button>
+
+      <div className="card p-5 mb-5">
         <InlineEditText
           value={proj.title}
           onSave={(title) => title && saveProjectField({ title })}
           displayClassName="text-xl font-extrabold tracking-tight"
-          inputClassName="text-xl font-extrabold tracking-tight w-full border border-border bg-surface2 rounded-lg px-2 py-1 outline-none focus:border-accent"
+          inputClassName="text-xl font-extrabold tracking-tight w-full border border-border bg-surface2 rounded-lg px-3 py-1.5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/10"
         />
         <InlineEditText
           as="textarea"
           value={proj.description ?? ''}
           onSave={(description) => saveProjectField({ description })}
           placeholder="Добавить описание проекта…"
-          displayClassName="text-sm text-muted mt-1 max-w-[640px] min-h-[20px]"
-          inputClassName="text-sm w-full max-w-[640px] border border-border bg-surface2 rounded-lg p-2 outline-none focus:border-accent min-h-[60px]"
+          displayClassName="text-sm text-muted mt-1.5 max-w-[640px] min-h-[20px]"
+          inputClassName="text-sm w-full max-w-[640px] border border-border bg-surface2 rounded-lg p-3 outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 min-h-[64px]"
         />
-        <div className="flex items-center gap-4 mt-3 flex-wrap">
+        <div className="flex items-center gap-5 mt-4 pt-4 border-t border-border flex-wrap">
           <div className="flex items-center gap-3 max-w-[420px] flex-1 min-w-[220px]">
             <ProgressBar value={overallProgress} />
-            <span className="text-[13px] font-semibold flex-none">{Math.round(overallProgress)}%</span>
+            <span className="text-[13px] font-semibold flex-none tabular-nums">{Math.round(overallProgress)}%</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-muted font-semibold uppercase">Месяц сдачи</span>
+          <div className="flex items-center gap-2 flex-none">
+            <span className="text-[11px] text-muted font-semibold uppercase tracking-wide">Месяц сдачи</span>
             <MonthSelect
               value={proj.due_month ?? ''}
               onChange={(due_month) => saveProjectField({ due_month })}
-              className="border border-border bg-surface2 rounded-lg px-2.5 py-1.5 text-[13px]"
+              className="border border-border bg-surface2 rounded-lg px-3 py-1.5 text-[13px] outline-none focus:border-accent"
             />
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-[260px_1fr] gap-5 items-start">
-        <div className="card p-2.5">
-          <div className="flex items-center justify-between px-1.5 pb-2">
-            <span className="text-[11px] font-bold text-muted uppercase">Этапы</span>
-            <button onClick={() => setAddingStage(true)} className="text-muted hover:text-accent text-sm px-0.5">+</button>
+      <div className="grid grid-cols-[280px_1fr] gap-5 items-start">
+        <div className="card p-3">
+          <div className="flex items-center justify-between px-1 pb-2.5">
+            <span className="text-[11px] font-bold text-muted uppercase tracking-wide">Этапы</span>
+            <button
+              onClick={() => setAddingStage(true)}
+              className="w-6 h-6 flex items-center justify-center rounded-md text-muted hover:text-accent hover:bg-accentSoft transition-colors text-base leading-none"
+            >+</button>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1.5">
             {sortedStages.map((s) => {
               const pct = stageProgress(s.id);
               const active = activeStage?.id === s.id;
@@ -167,7 +180,7 @@ export default function ProjectDetail({
                 <div
                   key={s.id}
                   onClick={() => setActiveStageId(s.id)}
-                  className={`group text-left rounded-xl p-2.5 transition-colors cursor-pointer ${active ? 'bg-accentSoft' : 'hover:bg-surface2'}`}
+                  className={`group text-left rounded-xl p-3 transition-colors cursor-pointer border ${active ? 'bg-accentSoft border-accent/30' : 'border-transparent hover:bg-surface2'}`}
                 >
                   <div className="flex items-center gap-2">
                     {editingStageId === s.id ? (
@@ -175,26 +188,26 @@ export default function ProjectDetail({
                         value={s.title}
                         onSave={(title) => { renameStage(s, title); setEditingStageId(null); }}
                         displayClassName={`text-[13px] font-semibold flex-1 ${active ? 'text-accent' : ''}`}
-                        inputClassName="text-[13px] font-semibold flex-1 border border-border bg-surface rounded-md px-1.5 py-0.5 outline-none focus:border-accent"
+                        inputClassName="text-[13px] font-semibold flex-1 border border-border bg-surface rounded-md px-2 py-1 outline-none focus:border-accent"
                       />
                     ) : (
-                      <span className={`text-[13px] font-semibold flex-1 ${active ? 'text-accent' : ''}`}>{s.title}</span>
+                      <span className={`text-[13px] font-semibold flex-1 truncate ${active ? 'text-accent' : ''}`}>{s.title}</span>
                     )}
-                    <span className="text-[11px] text-muted">{Math.round(pct)}%</span>
+                    <span className="text-[11px] text-muted tabular-nums flex-none">{Math.round(pct)}%</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditingStageId(s.id); }}
                       title="Переименовать этап"
-                      className="text-muted hover:text-accent text-[11px] opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="w-5 h-5 flex-none flex items-center justify-center rounded text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity text-[11px]"
                     >✎</button>
                   </div>
-                  <div className="mt-1.5"><ProgressBar value={pct} size="sm" /></div>
+                  <div className="mt-2"><ProgressBar value={pct} size="sm" /></div>
                 </div>
               );
             })}
-            {sortedStages.length === 0 && <div className="text-center py-6 text-[12px] text-muted">Нет этапов</div>}
+            {sortedStages.length === 0 && <div className="text-center py-8 text-[12.5px] text-muted">Нет этапов</div>}
           </div>
           {addingStage && (
-            <div className="p-1.5 mt-1">
+            <div className="p-1 mt-1.5">
               <input
                 autoFocus
                 value={newStageTitle}
@@ -202,35 +215,47 @@ export default function ProjectDetail({
                 onKeyDown={(e) => { if (e.key === 'Enter') addStage(); if (e.key === 'Escape') setAddingStage(false); }}
                 onBlur={() => { if (!newStageTitle.trim()) setAddingStage(false); }}
                 placeholder="Название этапа…"
-                className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-1.5 text-[13px]"
+                className={FIELD}
               />
             </div>
           )}
         </div>
 
-        <div className="card p-4">
+        <div className="card p-5">
           {activeStage ? (
             <>
-              <div className="flex items-center justify-between mb-3.5">
+              <div className="flex items-center justify-between mb-4 pb-3.5 border-b border-border">
                 <div className="font-bold text-[15px]">{activeStage.title}</div>
-                <button onClick={() => deleteStage(activeStage)} title="Удалить этап" className="text-muted hover:text-red text-xs">🗑</button>
+                <button
+                  onClick={() => deleteStage(activeStage)}
+                  title="Удалить этап"
+                  className="w-8 h-8 flex-none flex items-center justify-center rounded-lg text-muted hover:text-red hover:bg-red/10 transition-colors text-sm"
+                >🗑</button>
               </div>
-              <div className="flex flex-col gap-1.5 mb-3">
+              <div className="flex flex-col gap-1 mb-4">
                 {activeTasks.map((t) => (
-                  <div key={t.id} className="flex items-center gap-2.5 py-1.5 border-b border-border last:border-0 group">
-                    <input type="checkbox" checked={t.is_done} onChange={() => toggleTask(t)} />
-                    <div className="flex-1">
+                  <div key={t.id} className="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-surface2 transition-colors group">
+                    <input
+                      type="checkbox"
+                      checked={t.is_done}
+                      onChange={() => toggleTask(t)}
+                      className="w-4 h-4 flex-none accent-[var(--accent)] cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
                       <InlineEditText
                         value={t.title}
                         onSave={(title) => renameTask(t, title)}
                         displayClassName={`text-[13.5px] ${t.is_done ? 'line-through text-muted' : ''}`}
-                        inputClassName="text-[13.5px] w-full border border-border bg-surface2 rounded-md px-1.5 py-0.5 outline-none focus:border-accent"
+                        inputClassName="text-[13.5px] w-full border border-border bg-surface rounded-md px-2 py-1 outline-none focus:border-accent"
                       />
                     </div>
-                    <button onClick={() => deleteTask(t)} className="text-muted hover:text-red text-xs opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+                    <button
+                      onClick={() => deleteTask(t)}
+                      className="w-6 h-6 flex-none flex items-center justify-center rounded text-muted hover:text-red opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+                    >✕</button>
                   </div>
                 ))}
-                {activeTasks.length === 0 && <div className="text-center py-8 text-[12.5px] text-muted">Нет задач в этом этапе</div>}
+                {activeTasks.length === 0 && <div className="text-center py-10 text-[12.5px] text-muted">Нет задач в этом этапе</div>}
               </div>
               <div className="flex gap-2">
                 <input
@@ -238,9 +263,12 @@ export default function ProjectDetail({
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && addTask()}
                   placeholder="Добавить задачу…"
-                  className="flex-1 border border-border bg-surface2 rounded-lg px-2.5 py-1.5 text-[13px]"
+                  className={FIELD + ' flex-1'}
                 />
-                <button onClick={addTask} className="px-2.5 border border-border rounded-lg text-sm">+</button>
+                <button
+                  onClick={addTask}
+                  className="w-9 h-9 flex-none flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent transition-colors text-base leading-none"
+                >+</button>
               </div>
             </>
           ) : (
