@@ -1,16 +1,22 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import type { Department, Profile, Task } from '@/lib/database.types';
+import type { Department, Profile, Task, Project } from '@/lib/database.types';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { usePresence } from '@/hooks/usePresence';
 import { Avatar } from '@/components/AppShell';
 import QuickAddModal from '@/components/QuickAddModal';
 import { fullName } from '@/lib/utils';
 const ROLE_LABEL: Record<string, string> = { administrator: 'Администратор', manager: 'Руководитель', employee: 'Сотрудник', viewer: 'Наблюдатель' };
+
 export default function EmployeesGrid({
-  profiles, tasks, departments,
-}: { profiles: Profile[]; tasks: { id: string; assignee_id: string | null; status: string }[]; departments: Department[] }) {
+  profiles, tasks, projects, departments,
+}: {
+  profiles: Profile[];
+  tasks: { id: string; assignee_id: string | null; status: string }[];
+  projects: { id: string; owner_id: string | null; approval_status: string }[];
+  departments: Department[];
+}) {
   const { profile: me } = useCurrentUser();
   const { others } = usePresence('workspace-presence', me ? { user_id: me.id, name: fullName(me), avatar_url: me.avatar_url } : null);
   const onlineIds = new Set([me?.id, ...others.map((o) => o.user_id)].filter(Boolean));
@@ -23,10 +29,10 @@ export default function EmployeesGrid({
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3.5">
         {profiles.map((p) => {
-          const mine = tasks.filter((t) => t.assignee_id === p.id);
-          const current = mine.filter((t) => t.status === 'in_progress').length;
-          const projects = mine.filter((t) => t.status === 'review').length;
-          const approval = mine.filter((t) => t.status === 'done').length;
+          const myTasks = tasks.filter((t) => t.assignee_id === p.id);
+          const myProjects = projects.filter((pr) => pr.owner_id === p.id);
+          const procedures = myTasks.filter((t) => t.status === 'review').length;
+          const approval = myTasks.filter((t) => t.status === 'done').length + myProjects.filter((pr) => pr.approval_status === 'review').length;
           const dept = departments.find((d) => d.id === p.department_id);
           const isMine = me?.id === p.id;
           return (
@@ -40,8 +46,8 @@ export default function EmployeesGrid({
                 <div className="text-xs text-muted">{ROLE_LABEL[p.role] ?? p.role}</div>
                 <div className="text-[11px] text-muted mb-2.5">{dept?.name ?? 'Без отдела'}</div>
                 <div className="flex justify-center gap-3.5 text-[11.5px] border-t border-border pt-2.5">
-                  <div><b className="block text-sm">{current}</b>текущие</div>
-                  <div><b className="block text-sm">{projects}</b>проекты</div>
+                  <div><b className="block text-sm">{myProjects.length}</b>проекты</div>
+                  <div><b className="block text-sm">{procedures}</b>процедуры</div>
                   <div><b className="block text-sm">{approval}</b>на согл.</div>
                 </div>
               </Link>
