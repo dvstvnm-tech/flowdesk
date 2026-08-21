@@ -9,6 +9,7 @@ import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName, monthLabel
 import { Avatar } from '@/components/AppShell';
 import TaskPanel from '@/components/TaskPanel';
 import QuickAddModal from '@/components/QuickAddModal';
+import NewProjectModal from '@/components/NewProjectModal';
 import ProgressBar from '@/components/ProgressBar';
 
 const BLOCK_COLORS: Record<string, string> = {
@@ -36,6 +37,7 @@ export default function KanbanBoard({
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>(initialProjectTasks);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [quickAdd, setQuickAdd] = useState<string | null>(null);
+  const [addingProject, setAddingProject] = useState(false);
 
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -210,6 +212,7 @@ export default function KanbanBoard({
           isMine={me?.id === p.id}
           onOpenTask={setOpenTaskId}
           onAdd={(status) => setQuickAdd(status)}
+          onAddProject={() => setAddingProject(true)}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
@@ -224,16 +227,23 @@ export default function KanbanBoard({
           onCreated={(t) => { setTasks((prev) => [t, ...prev]); setQuickAdd(null); }}
         />
       )}
+
+      {addingProject && (
+        <NewProjectModal
+          onClose={() => setAddingProject(false)}
+          onCreated={(p) => { setProjects((prev) => [p, ...prev]); setAddingProject(false); }}
+        />
+      )}
     </div>
   );
 }
 
 function EmployeeSection({
-  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd,
+  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject,
 }: {
   profile: Profile; tasks: Task[]; projects: Project[];
   projectProgress: (id: string) => { pct: number; total: number };
-  isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void;
+  isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
 }) {
   return (
     <div className="mb-7">
@@ -243,7 +253,7 @@ function EmployeeSection({
         <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{tasks.length + projects.length} задач</span>
       </div>
       <div className="grid grid-cols-3 gap-2.5">
-        <Block color={BLOCK_COLORS.projects} label="Проекты" subtitle={BLOCK_SUBTITLES.projects} count={projects.length} isMine={isMine} onAdd={isMine ? () => (window.location.href = '/projects') : undefined}>
+        <Block color={BLOCK_COLORS.projects} label="Проекты" subtitle={BLOCK_SUBTITLES.projects} count={projects.length} isMine={isMine} onAdd={isMine ? onAddProject : undefined}>
           {projects.map((pr) => {
             const { pct, total } = projectProgress(pr.id);
             return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} />;

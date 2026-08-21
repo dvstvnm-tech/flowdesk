@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import type { Project, ProjectStage, ProjectTask, Profile } from '@/lib/database.types';
-import { fullName, monthLabel, currentMonthKey, sortMonthKeys } from '@/lib/utils';
+import { fullName, monthLabel, sortMonthKeys } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 import ProgressBar from '@/components/ProgressBar';
-import MonthSelect from '@/components/MonthSelect';
+import NewProjectModal from '@/components/NewProjectModal';
 
 export default function ProjectsList({
   initialProjects, initialStages, initialTasks, profiles,
@@ -18,10 +18,6 @@ export default function ProjectsList({
   const [stages, setStages] = useState<ProjectStage[]>(initialStages);
   const [tasks, setTasks] = useState<ProjectTask[]>(initialTasks);
   const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [dueMonth, setDueMonth] = useState<string>(currentMonthKey());
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const channel = supabase
@@ -59,19 +55,6 @@ export default function ProjectsList({
     const projectTasks = tasks.filter((t) => stageIds.includes(t.stage_id));
     if (projectTasks.length === 0) return 0;
     return (projectTasks.filter((t) => t.is_done).length / projectTasks.length) * 100;
-  }
-
-  async function createProject() {
-    if (!title.trim() || !me) return;
-    setSaving(true);
-    const { data, error } = await supabase
-      .from('projects')
-      .insert({ title: title.trim(), description: description.trim(), owner_id: me.id, due_month: dueMonth })
-      .select().single();
-    setSaving(false);
-    if (error) { alert('Не удалось создать проект: ' + error.message); return; }
-    setProjects((prev) => [data as Project, ...prev]);
-    setTitle(''); setDescription(''); setCreating(false);
   }
 
   // Группировка проектов по месяцу сдачи — заголовок месяца сверху, проекты этого месяца под ним
@@ -132,31 +115,10 @@ export default function ProjectsList({
       {projects.length === 0 && <div className="text-muted text-sm text-center py-16">Пока нет ни одного проекта</div>}
 
       {creating && (
-        <div className="fixed inset-0 z-[70] bg-black/45 flex items-start justify-center pt-[10vh]" onClick={() => setCreating(false)}>
-          <div className="bg-surface rounded-2xl w-[480px] max-w-[92vw] shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="p-4 border-b border-border font-bold text-[15px]">Новый проект</div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-text2 block mb-1">Название</label>
-                <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Например: Запуск Корпоративного университета" className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-text2 block mb-1">Описание (необязательно)</label>
-                <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full border border-border bg-surface2 rounded-lg p-2.5 text-sm min-h-[70px]" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-text2 block mb-1">Месяц сдачи</label>
-                <MonthSelect value={dueMonth} onChange={setDueMonth} />
-              </div>
-            </div>
-            <div className="p-3.5 border-t border-border flex justify-end gap-2">
-              <button onClick={() => setCreating(false)} className="px-3 py-1.5 border border-border rounded-lg text-sm">Отмена</button>
-              <button onClick={createProject} disabled={saving} className="px-3 py-1.5 bg-accent text-white rounded-lg text-sm font-semibold disabled:opacity-60">
-                {saving ? 'Создаём…' : 'Создать проект'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <NewProjectModal
+          onClose={() => setCreating(false)}
+          onCreated={(p) => { setProjects((prev) => [p, ...prev]); setCreating(false); }}
+        />
       )}
     </div>
   );
