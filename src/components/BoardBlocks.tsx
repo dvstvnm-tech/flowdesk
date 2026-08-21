@@ -17,17 +17,27 @@ export const BLOCK_SUBTITLES: Record<string, string> = {
   done: 'Требует согласования руководителя',
 };
 
+// Задача считается «процедурной» (живёт в блоке «Процедуры»), если у неё
+// когда-либо был выбран месяц — это устойчивый признак, который не пропадает
+// при смене статуса review → done → approved.
+function isProcedureTask(t: Task) {
+  return t.status === 'review' || !!t.due_month;
+}
+
 export function EmployeeSection({
-  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject, onDeleteTask, onDeleteProject, onApproveProject, showHeader = true,
+  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject,
+  onDeleteTask, onDeleteProject, onApproveProject, onApproveTask, showHeader = true,
 }: {
   profile: Profile; tasks: Task[]; projects: Project[];
   projectProgress: (id: string) => { pct: number; total: number };
   isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
-  onDeleteTask: (task: Task) => void; onDeleteProject: (project: Project) => void; onApproveProject: (project: Project) => void;
+  onDeleteTask: (task: Task) => void; onDeleteProject: (project: Project) => void;
+  onApproveProject: (project: Project) => void; onApproveTask: (task: Task) => void;
   showHeader?: boolean;
 }) {
   const projectsInReview = projects.filter((p) => p.approval_status === 'review');
-  const doneTasksCount = tasks.filter((t) => t.status === 'done').length;
+  const procedureTasks = tasks.filter(isProcedureTask);
+  const doneTasks = tasks.filter((t) => t.status === 'done');
   return (
     <div className="mb-7">
       {showHeader && (
@@ -43,20 +53,20 @@ export function EmployeeSection({
           {projects.length === 0 && <Empty />}
         </Block>
 
-        <Block color={BLOCK_COLORS.review} label={STATUS_META.review.label} subtitle={BLOCK_SUBTITLES.review} count={tasks.filter((t) => t.status === 'review').length} isMine={isMine} onAdd={() => onAdd('review')}>
-          <MonthGroupedTasks tasks={tasks.filter((t) => t.status === 'review')} onOpenTask={onOpenTask} isMine={isMine} onDelete={onDeleteTask} />
-          {tasks.filter((t) => t.status === 'review').length === 0 && <Empty />}
+        <Block color={BLOCK_COLORS.review} label={STATUS_META.review.label} subtitle={BLOCK_SUBTITLES.review} count={procedureTasks.length} isMine={isMine} onAdd={() => onAdd('review')}>
+          <MonthGroupedProcedureTasks tasks={procedureTasks} onOpenTask={onOpenTask} isMine={isMine} onDelete={onDeleteTask} />
+          {procedureTasks.length === 0 && <Empty />}
         </Block>
 
-        <Block color={BLOCK_COLORS.done} label={STATUS_META.done.label} subtitle={BLOCK_SUBTITLES.done} count={doneTasksCount + projectsInReview.length} isMine={isMine} onAdd={() => onAdd('done')}>
+        <Block color={BLOCK_COLORS.done} label={STATUS_META.done.label} subtitle={BLOCK_SUBTITLES.done} count={doneTasks.length + projectsInReview.length} isMine={isMine} onAdd={() => onAdd('done')}>
           {projectsInReview.map((pr) => {
             const { pct, total } = projectProgress(pr.id);
             return <ProjectApprovalCard key={pr.id} project={pr} pct={pct} subtaskCount={total} onApprove={() => onApproveProject(pr)} />;
           })}
-          {tasks.filter((t) => t.status === 'done').map((t) => (
-            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} showApprovalBadge isMine={isMine} onDelete={() => onDeleteTask(t)} />
+          {doneTasks.map((t) => (
+            <TaskApprovalCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} onApprove={() => onApproveTask(t)} />
           ))}
-          {doneTasksCount === 0 && projectsInReview.length === 0 && <Empty />}
+          {doneTasks.length === 0 && projectsInReview.length === 0 && <Empty />}
         </Block>
       </div>
     </div>
@@ -114,20 +124,32 @@ export function MonthGroupedProjects({
   );
 }
 
-export function MonthGroupedTasks({
+// Задачи блока «Процедуры»: активные (review/done) сгруппированы по месяцу,
+// согласованные (approved) — в отдельной группе «Архивные задачи» — по аналогии с проектами.
+export function MonthGroupedProcedureTasks({
   tasks, onOpenTask, isMine, onDelete,
 }: { tasks: Task[]; onOpenTask: (id: string) => void; isMine: boolean; onDelete: (task: Task) => void }) {
-  const keys = sortMonthKeys(Array.from(new Set(tasks.map((t) => t.due_month ?? null))));
+  const archived = tasks.filter((t) => t.status === 'approved');
+  const active = tasks.filter((t) => t.status !== 'approved');
+  const keys = sortMonthKeys(Array.from(new Set(active.map((t) => t.due_month ?? null))));
   return (
     <>
       {keys.map((key) => (
         <div key={key ?? 'none'} className="flex flex-col gap-2">
           <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">{monthLabel(key)}</div>
-          {tasks.filter((t) => (t.due_month ?? null) === key).map((t) => (
-            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} isMine={isMine} onDelete={() => onDelete(t)} />
+          {active.filter((t) => (t.due_month ?? null) === key).map((t) => (
+            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} isMine={isMine} onDelete={() => onDelete(t)} procedureStatus={t.status} />
           ))}
         </div>
       ))}
+      {archived.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">Архивные задачи</div>
+          {archived.map((t) => (
+            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} isMine={isMine} onDelete={() => onDelete(t)} procedureStatus={t.status} />
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -192,9 +214,34 @@ export function ProjectApprovalCard({
   );
 }
 
+// Карточка задачи «на согласовании» в третьем блоке — с кнопкой самообслуживания «Согласовано»,
+// по аналогии с ProjectApprovalCard.
+export function TaskApprovalCard({ task, onOpen, onApprove }: { task: Task; onOpen: () => void; onApprove: () => void }) {
+  const pr = PRIORITY_META[task.priority];
+  return (
+    <div className="bg-surface border border-border rounded-[10px] p-2.5 shadow-sm hover:shadow transition-shadow" style={{ borderLeft: `3px solid ${pr.color}` }}>
+      <div onClick={onOpen} className="cursor-pointer mb-2.5">
+        <div className="text-[13px] font-semibold mb-1.5">{task.title}</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {task.due_month ? (
+            <span className="text-[11px] flex items-center gap-1 text-muted">📅 {monthLabel(task.due_month)}</span>
+          ) : (
+            <span className="text-[11px] flex items-center gap-1 text-muted">🕐 {formatDate(task.due_date)}</span>
+          )}
+          <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5" style={{ background: pr.color + '22', color: pr.color }}>{pr.label}</span>
+        </div>
+      </div>
+      <button
+        onClick={(e) => { e.stopPropagation(); onApprove(); }}
+        className="w-full text-xs font-semibold bg-green text-white rounded-lg px-2.5 py-1.5 hover:opacity-90 transition-opacity"
+      >✓ Согласовано</button>
+    </div>
+  );
+}
+
 export function TaskCard({
-  task, onOpen, showApprovalBadge, isMine, onDelete,
-}: { task: Task; onOpen: () => void; showApprovalBadge?: boolean; isMine?: boolean; onDelete?: () => void }) {
+  task, onOpen, showApprovalBadge, isMine, onDelete, procedureStatus,
+}: { task: Task; onOpen: () => void; showApprovalBadge?: boolean; isMine?: boolean; onDelete?: () => void; procedureStatus?: string }) {
   const pr = PRIORITY_META[task.priority];
   const overdue = isOverdue(task.due_date, task.status);
   return (
@@ -217,7 +264,13 @@ export function TaskCard({
         ) : (
           <span className={`text-[11px] flex items-center gap-1 ${overdue ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(task.due_date)}</span>
         )}
-        {!showApprovalBadge && (
+        {procedureStatus === 'done' && (
+          <span className="text-[10.5px] font-semibold rounded-full px-2 py-0.5 bg-accentSoft text-accent">На согласовании</span>
+        )}
+        {procedureStatus === 'approved' && (
+          <span className="text-[10.5px] font-semibold rounded-full px-2 py-0.5 bg-green/15 text-green">✓ Согласовано</span>
+        )}
+        {(!procedureStatus || procedureStatus === 'review') && !showApprovalBadge && (
           <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5" style={{ background: pr.color + '22', color: pr.color }}>{pr.label}</span>
         )}
         {showApprovalBadge && (

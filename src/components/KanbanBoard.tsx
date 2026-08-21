@@ -115,22 +115,28 @@ export default function KanbanBoard({
 
   async function deleteTask(task: Task) {
     if (!confirm('Удалить задачу «' + task.title + '»? Это действие необратимо.')) return;
-    setTasks((prev) => prev.filter((t) => t.id !== task.id));
     const { error } = await supabase.from('tasks').delete().eq('id', task.id);
-    if (error) alert('Не удалось удалить задачу: ' + error.message);
+    if (error) { alert('Не удалось удалить задачу: ' + error.message); return; }
+    setTasks((prev) => prev.filter((t) => t.id !== task.id));
   }
 
   async function deleteProject(project: Project) {
     if (!confirm('Удалить проект «' + project.title + '» вместе со всеми этапами и подзадачами? Это действие необратимо.')) return;
-    setProjects((prev) => prev.filter((p) => p.id !== project.id));
     const { error } = await supabase.from('projects').delete().eq('id', project.id);
-    if (error) alert('Не удалось удалить проект: ' + error.message);
+    if (error) { alert('Не удалось удалить проект: ' + error.message); return; }
+    setProjects((prev) => prev.filter((p) => p.id !== project.id));
   }
 
   async function approveProject(project: Project) {
     setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, approval_status: 'approved' } : p)));
     const { error } = await supabase.from('projects').update({ approval_status: 'approved' }).eq('id', project.id);
     if (error) alert('Не удалось согласовать проект: ' + error.message);
+  }
+
+  async function approveTask(task: Task) {
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: 'approved' } : t)));
+    const { error } = await supabase.from('tasks').update({ status: 'approved' }).eq('id', task.id);
+    if (error) alert('Не удалось согласовать задачу: ' + error.message);
   }
 
   const total = tasks.length;
@@ -224,6 +230,7 @@ export default function KanbanBoard({
           onDeleteTask={deleteTask}
           onDeleteProject={deleteProject}
           onApproveProject={approveProject}
+          onApproveTask={approveTask}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
