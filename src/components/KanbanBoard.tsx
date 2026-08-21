@@ -1,36 +1,41 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
-import type { Task, Profile, Project, Stage } from '@/lib/database.types';
-import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName } from '@/lib/utils';
+import type { Task, Profile, Project, ProjectStage, ProjectTask } from '@/lib/database.types';
+import { STATUS_META, PRIORITY_META, formatDate, isOverdue, fullName, monthLabel, sortMonthKeys } from '@/lib/utils';
 import { Avatar } from '@/components/AppShell';
 import TaskPanel from '@/components/TaskPanel';
 import QuickAddModal from '@/components/QuickAddModal';
-import ProjectQuickAddModal from '@/components/ProjectQuickAddModal';
+import ProgressBar from '@/components/ProgressBar';
 
-// Компактные блоки со статусами "Процедуры" на общей доске (карточка "Проекты" рисуется отдельно)
-const PROCEDURE_STATUS = 'review';
-const PROCEDURE_DONE_STATUS = 'done';
+const BLOCK_COLORS: Record<string, string> = {
+  projects: '#7C4FE0',
+  review: '#16A34A',
+  done: '#C77C0A',
+};
+const BLOCK_SUBTITLES: Record<string, string> = {
+  projects: 'Глобальные задачи на год',
+  review: 'Документарная часть',
+  done: 'Требует согласования руководителя',
+};
 
 export default function KanbanBoard({
-  initialTasks, profiles, initialProjects, initialStages,
-}: { initialTasks: Task[]; profiles: Profile[]; initialProjects: Project[]; initialStages: Stage[] }) {
+  initialTasks, profiles, initialProjects, initialStages, initialProjectTasks,
+}: {
+  initialTasks: Task[]; profiles: Profile[];
+  initialProjects: Project[]; initialStages: ProjectStage[]; initialProjectTasks: ProjectTask[];
+}) {
   const supabase = createClient();
-  const router = useRouter();
   const { profile: me } = useCurrentUser();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
-  const [stages, setStages] = useState<Stage[]>(initialStages);
+  const [stages, setStages] = useState<ProjectStage[]>(initialStages);
+  const [projectTasks, setProjectTasks] = useState<ProjectTask[]>(initialProjectTasks);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const [quickAdd, setQuickAdd] = useState<string | null>(null); // статус процедуры, для которой открыта форма
-  const [projectQuickAddFor, setProjectQuickAddFor] = useState<string | null>(null); // id сотрудника
-
-  function openProject(id: string, stageId?: string) {
-    router.push(`/projects/${id}${stageId ? `?stage=${stageId}` : ''}`);
-  }
+  const [quickAdd, setQuickAdd] = useState<string | null>(null);
 
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -40,7 +45,6 @@ export default function KanbanBoard({
   const [fPriority, setFPriority] = useState('');
   const [fOverdue, setFOverdue] = useState(false);
 
-  // ---- Realtime: задачи (процедуры + задачи внутри этапов) ----
   useEffect(() => {
     const channel = supabase
       .channel('tasks-board')
@@ -50,60 +54,32 @@ export default function KanbanBoard({
             if (prev.some((t) => t.id === (payload.new as Task).id)) return prev;
             return [payload.new as Task, ...prev];
           }
-          if (payload.eventType === 'UPDATE') {
-            return prev.map((t) => (t.id === (payload.new as Task).id ? (payload.new as Task) : t));
-          }
-          if (payload.eventType === 'DELETE') {
-            return prev.filter((t) => t.id !== (payload.old as Task).id);
-          }
+          if (payload.eventType === 'UPDATE') return prev.map((t) => (t.id === (payload.new as Task).id ? (payload.new as Task) : t));
+          if (payload.eventType === 'DELETE') return prev.filter((t) => t.id !== (payload.old as Task).id);
           return prev;
         });
       })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ---- Realtime: проекты ----
-  useEffect(() => {
-    const channel = supabase
-      .channel('projects-board')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, (payload) => {
         setProjects((prev) => {
-          if (payload.eventType === 'INSERT') {
-            if (prev.some((p) => p.id === (payload.new as Project).id)) return prev;
-            return [payload.new as Project, ...prev];
-          }
-          if (payload.eventType === 'UPDATE') {
-            return prev.map((p) => (p.id === (payload.new as Project).id ? (payload.new as Project) : p));
-          }
-          if (payload.eventType === 'DELETE') {
-            return prev.filter((p) => p.id !== (payload.old as Project).id);
-          }
+          if (payload.eventType === 'INSERT') return prev.some((x) => x.id === (payload.new as Project).id) ? prev : [payload.new as Project, ...prev];
+          if (payload.eventType === 'UPDATE') return prev.map((x) => (x.id === (payload.new as Project).id ? (payload.new as Project) : x));
+          if (payload.eventType === 'DELETE') return prev.filter((x) => x.id !== (payload.old as Project).id);
           return prev;
         });
       })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ---- Realtime: этапы ----
-  useEffect(() => {
-    const channel = supabase
-      .channel('stages-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'stages' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'project_stages' }, (payload) => {
         setStages((prev) => {
-          if (payload.eventType === 'INSERT') {
-            if (prev.some((s) => s.id === (payload.new as Stage).id)) return prev;
-            return [...prev, payload.new as Stage];
-          }
-          if (payload.eventType === 'UPDATE') {
-            return prev.map((s) => (s.id === (payload.new as Stage).id ? (payload.new as Stage) : s));
-          }
-          if (payload.eventType === 'DELETE') {
-            return prev.filter((s) => s.id !== (payload.old as Stage).id);
-          }
+          if (payload.eventType === 'INSERT') return prev.some((x) => x.id === (payload.new as ProjectStage).id) ? prev : [...prev, payload.new as ProjectStage];
+          if (payload.eventType === 'UPDATE') return prev.map((x) => (x.id === (payload.new as ProjectStage).id ? (payload.new as ProjectStage) : x));
+          if (payload.eventType === 'DELETE') return prev.filter((x) => x.id !== (payload.old as ProjectStage).id);
+          return prev;
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'project_tasks' }, (payload) => {
+        setProjectTasks((prev) => {
+          if (payload.eventType === 'INSERT') return prev.some((x) => x.id === (payload.new as ProjectTask).id) ? prev : [...prev, payload.new as ProjectTask];
+          if (payload.eventType === 'UPDATE') return prev.map((x) => (x.id === (payload.new as ProjectTask).id ? (payload.new as ProjectTask) : x));
+          if (payload.eventType === 'DELETE') return prev.filter((x) => x.id !== (payload.old as ProjectTask).id);
           return prev;
         });
       })
@@ -112,7 +88,6 @@ export default function KanbanBoard({
     return () => { supabase.removeChannel(channel); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Поиск: задачи, проекты и сотрудники — локально; комментарии — отдельным запросом ----
   useEffect(() => {
     if (!query.trim()) { setCommentMatches([]); return; }
     const t = setTimeout(async () => {
@@ -125,13 +100,8 @@ export default function KanbanBoard({
   const matchingTasks = useMemo(() => {
     if (!query.trim()) return [];
     const q = query.toLowerCase();
-    return tasks.filter((t) => !t.stage_id && (t.title.toLowerCase().includes(q) || t.code.toLowerCase().includes(q))).slice(0, 6);
+    return tasks.filter((t) => t.title.toLowerCase().includes(q) || t.code.toLowerCase().includes(q)).slice(0, 6);
   }, [query, tasks]);
-  const matchingProjects = useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    return projects.filter((p) => p.title.toLowerCase().includes(q)).slice(0, 6);
-  }, [query, projects]);
   const matchingProfiles = useMemo(() => {
     if (!query.trim()) return [];
     const q = query.toLowerCase();
@@ -146,42 +116,24 @@ export default function KanbanBoard({
     });
   }, [tasks, fPriority, fOverdue]);
 
-  const stagesByProject = useMemo(() => {
-    const map = new Map<string, Stage[]>();
-    stages.forEach((s) => {
-      const list = map.get(s.project_id) ?? [];
-      list.push(s);
-      map.set(s.project_id, list);
-    });
-    map.forEach((list) => list.sort((a, b) => a.position - b.position));
-    return map;
-  }, [stages]);
+  function projectProgress(projectId: string) {
+    const stageIds = stages.filter((s) => s.project_id === projectId).map((s) => s.id);
+    const list = projectTasks.filter((t) => stageIds.includes(t.stage_id));
+    if (list.length === 0) return { pct: 0, total: 0 };
+    return { pct: (list.filter((t) => t.is_done).length / list.length) * 100, total: list.length };
+  }
 
-  const stageTasksByStage = useMemo(() => {
-    const map = new Map<string, Task[]>();
-    tasks.forEach((t) => {
-      if (!t.stage_id) return;
-      const list = map.get(t.stage_id) ?? [];
-      list.push(t);
-      map.set(t.stage_id, list);
-    });
-    return map;
-  }, [tasks]);
-
-  const total = tasks.filter((t) => !t.stage_id).length;
-  const projectsCount = projects.length;
-  const procedures = tasks.filter((t) => t.status === PROCEDURE_STATUS).length;
-  const overdue = tasks.filter((t) => !t.stage_id && isOverdue(t.due_date, t.status)).length
-    + projects.filter((p) => isOverdue(p.due_date, p.status === 'approved' ? 'done' : 'active')).length;
-  const done = tasks.filter((t) => !t.stage_id && (t.status === 'done' || t.status === 'approved')).length
-    + projects.filter((p) => p.status === 'approved').length;
+  const total = tasks.length;
+  const review = tasks.filter((t) => t.status === 'review').length;
+  const overdue = tasks.filter((t) => isOverdue(t.due_date, t.status)).length;
+  const done = tasks.filter((t) => t.status === 'done' || t.status === 'approved').length;
 
   return (
     <div className="p-6">
       <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
         <div>
           <h1 className="text-xl font-extrabold tracking-tight">Доска</h1>
-          <p className="text-sm text-muted mt-0.5">Задачи каждого сотрудника — сгруппированы по человеку</p>
+          <p className="text-sm text-muted mt-0.5">Проекты, процедуры и согласования — по каждому сотруднику</p>
         </div>
 
         <div className="relative">
@@ -192,18 +144,12 @@ export default function KanbanBoard({
               onChange={(e) => { setQuery(e.target.value); setSearchOpen(!!e.target.value); }}
               onFocus={() => setSearchOpen(!!query)}
               onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
-              placeholder="Поиск задач, проектов, сотрудников..."
+              placeholder="Поиск задач, сотрудников, комментариев..."
               className="bg-transparent outline-none text-[13px] flex-1"
             />
           </div>
-          {searchOpen && (matchingTasks.length > 0 || matchingProjects.length > 0 || matchingProfiles.length > 0 || commentMatches.length > 0) && (
+          {searchOpen && (matchingTasks.length > 0 || matchingProfiles.length > 0 || commentMatches.length > 0) && (
             <div className="absolute top-[42px] right-0 w-[360px] bg-surface border border-border rounded-xl shadow-lg overflow-hidden z-40 max-h-[70vh] overflow-y-auto">
-              {matchingProjects.length > 0 && <SearchGroup label="Проекты" />}
-              {matchingProjects.map((p) => (
-                <div key={p.id} onMouseDown={() => openProject(p.id)} className="flex items-center gap-2 px-3.5 py-2 hover:bg-surface2 cursor-pointer text-[13px]">
-                  <span className="w-2 h-2 rounded-full flex-none" style={{ background: '#7C4FE0' }} /> {p.title}
-                </div>
-              ))}
               {matchingTasks.length > 0 && <SearchGroup label="Задачи" />}
               {matchingTasks.map((t) => (
                 <div key={t.id} onMouseDown={() => setOpenTaskId(t.id)} className="flex items-center gap-2 px-3.5 py-2 hover:bg-surface2 cursor-pointer text-[13px]">
@@ -227,10 +173,9 @@ export default function KanbanBoard({
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-2.5 mb-4">
+      <div className="grid grid-cols-4 gap-2.5 mb-4">
         <Stat label="Всего задач" value={total} />
-        <Stat label="Проекты" value={projectsCount} accent />
-        <Stat label="Процедуры" value={procedures} />
+        <Stat label="Процедуры" value={review} accent />
         <Stat label="Просрочено" value={overdue} danger />
         <Stat label="Завершено" value={done} success />
       </div>
@@ -259,20 +204,17 @@ export default function KanbanBoard({
         <EmployeeSection
           key={p.id}
           profile={p}
-          procedureTasks={visibleTasks.filter((t) => t.assignee_id === p.id && !t.stage_id)}
-          employeeProjects={projects.filter((pr) => pr.assignee_id === p.id)}
-          stagesByProject={stagesByProject}
-          stageTasksByStage={stageTasksByStage}
+          tasks={visibleTasks.filter((t) => t.assignee_id === p.id)}
+          projects={projects.filter((pr) => pr.owner_id === p.id)}
+          projectProgress={projectProgress}
           isMine={me?.id === p.id}
           onOpenTask={setOpenTaskId}
-          onOpenProject={openProject}
           onAdd={(status) => setQuickAdd(status)}
-          onAddProject={() => setProjectQuickAddFor(p.id)}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
 
-      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} stages={stages} onClose={() => setOpenTaskId(null)} />}
+      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} onClose={() => setOpenTaskId(null)} />}
 
       {quickAdd && (
         <QuickAddModal
@@ -282,137 +224,104 @@ export default function KanbanBoard({
           onCreated={(t) => { setTasks((prev) => [t, ...prev]); setQuickAdd(null); }}
         />
       )}
-
-      {projectQuickAddFor && (
-        <ProjectQuickAddModal
-          onClose={() => setProjectQuickAddFor(null)}
-          onCreated={(pr) => { setProjects((prev) => [pr, ...prev]); setProjectQuickAddFor(null); }}
-        />
-      )}
     </div>
   );
 }
 
 function EmployeeSection({
-  profile, procedureTasks, employeeProjects, stagesByProject, stageTasksByStage, isMine, onOpenTask, onOpenProject, onAdd, onAddProject,
+  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd,
 }: {
-  profile: Profile; procedureTasks: Task[]; employeeProjects: Project[];
-  stagesByProject: Map<string, Stage[]>; stageTasksByStage: Map<string, Task[]>; isMine: boolean;
-  onOpenTask: (id: string) => void; onOpenProject: (id: string, stageId?: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
+  profile: Profile; tasks: Task[]; projects: Project[];
+  projectProgress: (id: string) => { pct: number; total: number };
+  isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void;
 }) {
-  const totalCount = procedureTasks.length + employeeProjects.length;
-
-  const proceduresInProgress = procedureTasks.filter((t) => t.status === PROCEDURE_STATUS);
-  const proceduresDone = procedureTasks.filter((t) => t.status === PROCEDURE_DONE_STATUS);
-
-  const stagesOnReview = employeeProjects.flatMap((pr) =>
-    (stagesByProject.get(pr.id) ?? []).filter((s) => s.status === 'on_review').map((s) => ({ stage: s, project: pr }))
-  );
-
   return (
     <div className="mb-7">
       <div className="flex items-center gap-2.5 mb-2.5">
         <Avatar profile={profile} size={30} />
         <span className="font-bold text-[14.5px]">{fullName(profile) || profile.email}</span>
-        <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{totalCount} задач</span>
+        <span className="text-[11.5px] text-muted bg-surface2 border border-border rounded-full px-2 py-0.5">{tasks.length + projects.length} задач</span>
       </div>
-
       <div className="grid grid-cols-3 gap-2.5">
+        <Block color={BLOCK_COLORS.projects} label="Проекты" subtitle={BLOCK_SUBTITLES.projects} count={projects.length} isMine={isMine} onAdd={isMine ? () => (window.location.href = '/projects') : undefined}>
+          {projects.map((pr) => {
+            const { pct, total } = projectProgress(pr.id);
+            return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} />;
+          })}
+          {projects.length === 0 && <Empty />}
+        </Block>
 
-        {/* ---- Проекты ---- */}
-        <div className="bg-surface2 border border-border rounded-2xl p-2.5">
-          <div className="flex items-center gap-2 px-1.5 pb-2.5">
-            <span className="w-2 h-2 rounded-full" style={{ background: '#7C4FE0' }} />
-            <span className="font-bold text-[12px]">Проекты</span>
-            <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{employeeProjects.length}</span>
-            {isMine && <button onClick={onAddProject} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
-          </div>
-          <div className="flex flex-col gap-2 min-h-[20px]">
-            {employeeProjects.map((pr) => (
-              <ProjectCard
-                key={pr.id}
-                project={pr}
-                stageCount={(stagesByProject.get(pr.id) ?? []).length}
-                onOpen={() => onOpenProject(pr.id)}
-              />
-            ))}
-            {employeeProjects.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
-          </div>
-        </div>
+        <Block color={BLOCK_COLORS.review} label={STATUS_META.review.label} subtitle={BLOCK_SUBTITLES.review} count={tasks.filter((t) => t.status === 'review').length} isMine={isMine} onAdd={() => onAdd('review')}>
+          <MonthGroupedTasks tasks={tasks.filter((t) => t.status === 'review')} onOpenTask={onOpenTask} />
+          {tasks.filter((t) => t.status === 'review').length === 0 && <Empty />}
+        </Block>
 
-        {/* ---- Процедуры ---- */}
-        <div className="bg-surface2 border border-border rounded-2xl p-2.5">
-          <div className="flex items-center gap-2 px-1.5 pb-2.5">
-            <span className="w-2 h-2 rounded-full" style={{ background: STATUS_META.review.color }} />
-            <span className="font-bold text-[12px]">Процедуры</span>
-            <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{proceduresInProgress.length}</span>
-            {isMine && <button onClick={() => onAdd(PROCEDURE_STATUS)} className="text-muted hover:text-accent text-sm px-0.5">+</button>}
-          </div>
-          <div className="flex flex-col gap-2 min-h-[20px]">
-            {proceduresInProgress.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
-            {proceduresInProgress.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
-          </div>
-        </div>
-
-        {/* ---- На согласование ---- */}
-        <div className="bg-surface2 border border-border rounded-2xl p-2.5">
-          <div className="flex items-center gap-2 px-1.5 pb-2.5">
-            <span className="w-2 h-2 rounded-full" style={{ background: STATUS_META.done.color }} />
-            <span className="font-bold text-[12px]">На согласование</span>
-            <span className="ml-auto text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{proceduresDone.length + stagesOnReview.length}</span>
-          </div>
-          <div className="flex flex-col gap-2 min-h-[20px]">
-            {stagesOnReview.map(({ stage, project }) => (
-              <ReviewCard key={stage.id} title={stage.title} subtitle={`проект «${project.title}»`} onOpen={() => onOpenProject(project.id, stage.id)} />
-            ))}
-            {proceduresDone.map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />)}
-            {proceduresDone.length === 0 && stagesOnReview.length === 0 && <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>}
-          </div>
-        </div>
-
+        <Block color={BLOCK_COLORS.done} label={STATUS_META.done.label} subtitle={BLOCK_SUBTITLES.done} count={tasks.filter((t) => t.status === 'done').length} isMine={isMine} onAdd={() => onAdd('done')}>
+          {tasks.filter((t) => t.status === 'done').map((t) => <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} showApprovalBadge />)}
+          {tasks.filter((t) => t.status === 'done').length === 0 && <Empty />}
+        </Block>
       </div>
     </div>
   );
 }
 
-function ProjectCard({ project, stageCount, onOpen }: { project: Project; stageCount: number; onOpen: () => void }) {
-  const approved = project.status === 'approved';
+function Block({
+  color, label, subtitle, count, isMine, onAdd, children,
+}: { color: string; label: string; subtitle: string; count: number; isMine: boolean; onAdd?: () => void; children: React.ReactNode }) {
   return (
-    <div
-      onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
-      style={{ borderLeft: `3px solid ${approved ? 'var(--green)' : '#7C4FE0'}` }}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="text-[13px] font-semibold">{project.title}</div>
-        {approved && <span className="text-[11px] font-bold text-green flex-none">✓</span>}
+    <div className="bg-surface2 border border-border rounded-2xl p-3">
+      <div className="flex items-center gap-2 px-0.5">
+        <span className="w-2 h-2 rounded-full" style={{ background: color }} />
+        <span className="font-bold text-[13px]">{label}</span>
+        <span className="text-[11px] text-muted bg-surface border border-border rounded-full px-1.5">{count}</span>
+        {isMine && onAdd && <button onClick={onAdd} className="ml-auto text-muted hover:text-accent text-sm px-0.5">+</button>}
       </div>
-      <div className="flex items-center justify-between mt-2">
-        <span className={`text-[11px] flex items-center gap-1 ${isOverdue(project.due_date, approved ? 'done' : 'active') ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(project.due_date)}</span>
-        <span className="text-[11px] text-muted bg-surface2 border border-border rounded-full px-1.5">{stageCount} {pluralStages(stageCount)}</span>
-      </div>
+      <div className="text-[11px] text-muted px-0.5 mt-0.5 mb-2.5">{subtitle}</div>
+      <div className="flex flex-col gap-2 min-h-[20px]">{children}</div>
     </div>
   );
 }
 
-function ReviewCard({ title, subtitle, onOpen }: { title: string; subtitle: string; onOpen: () => void }) {
+function Empty() {
+  return <div className="text-center py-3 text-[11px] text-muted/70">Нет задач</div>;
+}
+
+function MonthGroupedTasks({ tasks, onOpenTask }: { tasks: Task[]; onOpenTask: (id: string) => void }) {
+  const keys = sortMonthKeys(Array.from(new Set(tasks.map((t) => t.due_month ?? null))));
   return (
-    <div
-      onClick={onOpen}
-      className="bg-surface border border-border rounded-[10px] p-2.5 cursor-pointer shadow-sm hover:shadow transition-shadow"
-      style={{ borderLeft: '3px solid var(--accent)' }}
-    >
-      <div className="text-[13px] font-semibold mb-1">{title}</div>
-      <div className="text-[11px] text-muted">{subtitle}</div>
-    </div>
+    <>
+      {keys.map((key) => (
+        <div key={key ?? 'none'} className="flex flex-col gap-2">
+          <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">{monthLabel(key)}</div>
+          {tasks.filter((t) => (t.due_month ?? null) === key).map((t) => (
+            <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} />
+          ))}
+        </div>
+      ))}
+    </>
   );
 }
 
-function pluralStages(n: number): string {
-  const mod10 = n % 10, mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'этап';
-  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return 'этапа';
-  return 'этапов';
+function ProjectCard({ project, pct, subtaskCount }: { project: Project; pct: number; subtaskCount: number }) {
+  return (
+    <Link
+      href={`/projects/${project.id}`}
+      className="bg-surface border border-border rounded-[10px] p-2.5 block shadow-sm hover:shadow transition-shadow"
+    >
+      <div className="flex items-start gap-1.5 mb-2.5">
+        <div className="text-[13px] font-semibold flex-1">{project.title}</div>
+        <span className="text-muted text-xs flex-none">↗</span>
+      </div>
+      <div className="flex items-center gap-2 mb-2.5">
+        <ProgressBar value={pct} size="sm" />
+        <span className="text-[11px] font-semibold text-muted flex-none">{Math.round(pct)}%</span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        {project.due_month && <span className="text-[11px] text-muted flex items-center gap-1">📅 {monthLabel(project.due_month)}</span>}
+        <span className="ml-auto text-[10.5px] font-semibold bg-accentSoft text-accent rounded-full px-2 py-0.5">{subtaskCount} подзадач ›</span>
+      </div>
+    </Link>
+  );
 }
 
 function SearchGroup({ label }: { label: string }) {
@@ -439,7 +348,7 @@ function Stat({ label, value, accent, danger, success }: { label: string; value:
   );
 }
 
-function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
+function TaskCard({ task, onOpen, showApprovalBadge }: { task: Task; onOpen: () => void; showApprovalBadge?: boolean }) {
   const pr = PRIORITY_META[task.priority];
   const overdue = isOverdue(task.due_date, task.status);
   return (
@@ -449,7 +358,19 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
       style={{ borderLeft: `3px solid ${pr.color}` }}
     >
       <div className="text-[13px] font-semibold mb-2">{task.title}</div>
-      <span className={`text-[11px] flex items-center gap-1 ${overdue ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(task.due_date)}</span>
+      <div className="flex items-center gap-2 flex-wrap">
+        {task.due_month ? (
+          <span className="text-[11px] flex items-center gap-1 text-muted">📅 {monthLabel(task.due_month)}</span>
+        ) : (
+          <span className={`text-[11px] flex items-center gap-1 ${overdue ? 'text-red font-semibold' : 'text-muted'}`}>🕐 {formatDate(task.due_date)}</span>
+        )}
+        {!showApprovalBadge && (
+          <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5" style={{ background: pr.color + '22', color: pr.color }}>{pr.label}</span>
+        )}
+        {showApprovalBadge && (
+          <span className="ml-auto text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-accentSoft text-accent">На согласовании</span>
+        )}
+      </div>
     </div>
   );
 }

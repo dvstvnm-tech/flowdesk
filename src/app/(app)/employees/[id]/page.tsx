@@ -27,7 +27,7 @@ export default async function EmployeeProfilePage({ params }: { params: { id: st
         <Avatar profile={profile} size={76} />
         <div>
           <h1 className="text-xl font-extrabold">{fullName(profile) || 'Без имени'}</h1>
-          <p className="text-sm text-muted mt-0.5">{profile.job_title ?? ROLE_LABEL[profile.role] ?? profile.role} · {department?.name ?? 'Без отдела'}</p>
+          <p className="text-sm text-muted mt-0.5">{ROLE_LABEL[profile.role] ?? profile.role} · {department?.name ?? 'Без отдела'}</p>
         </div>
         {isMine && (
           <div className="ml-auto">

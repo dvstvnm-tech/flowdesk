@@ -1,329 +1,253 @@
 'use client';
-
-import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { useCurrentUser } from '@/hooks/useCurrentUser';
-import type { Project, Stage, Task, Profile } from '@/lib/database.types';
-import { formatDate, fullName } from '@/lib/utils';
-import { Avatar } from '@/components/AppShell';
-import TaskPanel from '@/components/TaskPanel';
+import type { Project, ProjectStage, ProjectTask } from '@/lib/database.types';
+import ProgressBar from '@/components/ProgressBar';
+import InlineEditText from '@/components/InlineEditText';
+import MonthSelect from '@/components/MonthSelect';
 
 export default function ProjectDetail({
-  initialProject, initialStages, initialTasks, profiles, initialSelectedStageId,
-}: {
-  initialProject: Project; initialStages: Stage[]; initialTasks: Task[]; profiles: Profile[]; initialSelectedStageId: string | null;
-}) {
+  project, initialStages, initialTasks,
+}: { project: Project; initialStages: ProjectStage[]; initialTasks: ProjectTask[] }) {
   const supabase = createClient();
-  const { profile: me } = useCurrentUser();
-
-  const [project, setProject] = useState<Project>(initialProject);
-  const [stages, setStages] = useState<Stage[]>(initialStages);
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
-  const [selectedStageId, setSelectedStageId] = useState<string | null>(initialSelectedStageId ?? initialStages[0]?.id ?? null);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [addingStage, setAddingStage] = useState(false);
+  const [proj, setProj] = useState<Project>(project);
+  const [stages, setStages] = useState<ProjectStage[]>(initialStages);
+  const [tasks, setTasks] = useState<ProjectTask[]>(initialTasks);
+  const [activeStageId, setActiveStageId] = useState<string | null>(initialStages[0]?.id ?? null);
   const [newStageTitle, setNewStageTitle] = useState('');
+  const [addingStage, setAddingStage] = useState(false);
+  const [editingStageId, setEditingStageId] = useState<string | null>(null);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
 
-  const canManage = me?.role === 'administrator' || me?.role === 'manager';
-  const isOwner = me?.id === project.assignee_id;
-
-  // ---- Realtime ----
   useEffect(() => {
     const channel = supabase
-      .channel(`project-page-${project.id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `id=eq.${project.id}` }, (p) => setProject(p.new as Project))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'stages', filter: `project_id=eq.${project.id}` }, (p) => refreshList(p, setStages))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (p) => {
-        const row = (p.eventType === 'DELETE' ? p.old : p.new) as Task;
-        setStages((current) => {
-          if (row.stage_id && current.some((s) => s.id === row.stage_id)) refreshList(p, setTasks);
-          return current;
+      .channel(`project-detail-${project.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `id=eq.${project.id}` }, (p) => {
+        setProj(p.new as Project);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'project_stages', filter: `project_id=eq.${project.id}` }, (p) => {
+        setStages((prev) => {
+          if (p.eventType === 'INSERT') return prev.some((x) => x.id === (p.new as ProjectStage).id) ? prev : [...prev, p.new as ProjectStage];
+          if (p.eventType === 'UPDATE') return prev.map((x) => (x.id === (p.new as ProjectStage).id ? (p.new as ProjectStage) : x));
+          if (p.eventType === 'DELETE') return prev.filter((x) => x.id !== (p.old as ProjectStage).id);
+          return prev;
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'project_tasks' }, (p) => {
+        setTasks((prev) => {
+          if (p.eventType === 'INSERT') return prev.some((x) => x.id === (p.new as ProjectTask).id) ? prev : [...prev, p.new as ProjectTask];
+          if (p.eventType === 'UPDATE') return prev.map((x) => (x.id === (p.new as ProjectTask).id ? (p.new as ProjectTask) : x));
+          if (p.eventType === 'DELETE') return prev.filter((x) => x.id !== (p.old as ProjectTask).id);
+          return prev;
         });
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function refreshList<T extends { id: string }>(payload: any, setter: React.Dispatch<React.SetStateAction<T[]>>) {
-    setter((prev) => {
-      if (payload.eventType === 'INSERT') return prev.some((x) => x.id === payload.new.id) ? prev : [...prev, payload.new as T];
-      if (payload.eventType === 'UPDATE') return prev.map((x) => (x.id === payload.new.id ? (payload.new as T) : x));
-      if (payload.eventType === 'DELETE') return prev.filter((x) => x.id !== payload.old.id);
-      return prev;
-    });
+  const sortedStages = useMemo(() => [...stages].sort((a, b) => a.position - b.position), [stages]);
+  const activeStage = sortedStages.find((s) => s.id === activeStageId) ?? sortedStages[0] ?? null;
+  const activeTasks = useMemo(
+    () => tasks.filter((t) => t.stage_id === activeStage?.id).sort((a, b) => a.position - b.position),
+    [tasks, activeStage]
+  );
+
+  const overallProgress = useMemo(() => {
+    const stageIds = stages.map((s) => s.id);
+    const relevant = tasks.filter((t) => stageIds.includes(t.stage_id));
+    if (relevant.length === 0) return 0;
+    return (relevant.filter((t) => t.is_done).length / relevant.length) * 100;
+  }, [tasks, stages]);
+
+  function stageProgress(stageId: string) {
+    const list = tasks.filter((t) => t.stage_id === stageId);
+    if (list.length === 0) return 0;
+    return (list.filter((t) => t.is_done).length / list.length) * 100;
   }
 
-  const tasksByStage = useMemo(() => {
-    const map = new Map<string, Task[]>();
-    tasks.forEach((t) => {
-      if (!t.stage_id) return;
-      const list = map.get(t.stage_id) ?? [];
-      list.push(t);
-      map.set(t.stage_id, list);
-    });
-    return map;
-  }, [tasks]);
-
-  const totalTasks = tasks.length;
-  const totalDone = tasks.filter((t) => t.status === 'done').length;
-  const overallProgress = totalTasks ? Math.round((totalDone / totalTasks) * 100) : 0;
-
-  const selectedStage = stages.find((s) => s.id === selectedStageId) ?? null;
-  const selectedIndex = stages.findIndex((s) => s.id === selectedStageId);
-  const selectedStageTasks = selectedStage ? (tasksByStage.get(selectedStage.id) ?? []) : [];
-  const selectedStageDone = selectedStageTasks.filter((t) => t.status === 'done').length;
-  const selectedStageProgress = selectedStageTasks.length ? Math.round((selectedStageDone / selectedStageTasks.length) * 100) : 0;
-
-  async function updateProjectField(patch: Partial<Project>) {
-    setProject({ ...project, ...patch });
-    await supabase.from('projects').update(patch).eq('id', project.id);
+  async function saveProjectField(patch: Partial<Project>) {
+    setProj((prev) => ({ ...prev, ...patch }));
+    await supabase.from('projects').update(patch).eq('id', proj.id);
   }
 
   async function addStage() {
     if (!newStageTitle.trim()) return;
-    const { data } = await supabase.from('stages').insert({ project_id: project.id, title: newStageTitle.trim(), position: stages.length }).select().single();
-    if (data) setSelectedStageId((data as Stage).id);
+    const { data, error } = await supabase.from('project_stages').insert({
+      project_id: project.id, title: newStageTitle.trim(), position: stages.length,
+    }).select().single();
+    if (error) { alert('Не удалось добавить этап: ' + error.message); return; }
+    setStages((prev) => [...prev, data as ProjectStage]);
+    setActiveStageId((data as ProjectStage).id);
     setNewStageTitle('');
     setAddingStage(false);
   }
 
-  async function deleteStage(stage: Stage) {
-    if (!confirm(`Удалить этап «${stage.title}» вместе со всеми задачами внутри?`)) return;
-    await supabase.from('stages').delete().eq('id', stage.id);
-    if (selectedStageId === stage.id) setSelectedStageId(null);
+  async function renameStage(stage: ProjectStage, title: string) {
+    if (!title) return;
+    setStages((prev) => prev.map((s) => (s.id === stage.id ? { ...s, title } : s)));
+    await supabase.from('project_stages').update({ title }).eq('id', stage.id);
   }
 
-  async function renameStage(stage: Stage, title: string) {
-    if (!title.trim() || title === stage.title) return;
-    await supabase.from('stages').update({ title: title.trim() }).eq('id', stage.id);
+  async function deleteStage(stage: ProjectStage) {
+    if (!confirm('Удалить этап «' + stage.title + '» вместе со всеми его задачами?')) return;
+    await supabase.from('project_stages').delete().eq('id', stage.id);
+    if (activeStageId === stage.id) setActiveStageId(null);
   }
 
   async function addTask() {
-    if (!newTaskTitle.trim() || !me || !selectedStage) return;
-    await supabase.from('tasks').insert({
-      title: newTaskTitle.trim(), stage_id: selectedStage.id, status: 'todo', priority: 'medium',
-      assignee_id: me.id, reporter_id: me.id,
+    if (!newTaskTitle.trim() || !activeStage) return;
+    const count = tasks.filter((t) => t.stage_id === activeStage.id).length;
+    const { error } = await supabase.from('project_tasks').insert({
+      stage_id: activeStage.id, title: newTaskTitle.trim(), position: count,
     });
+    if (error) { alert('Не удалось добавить задачу: ' + error.message); return; }
     setNewTaskTitle('');
   }
 
-  async function toggleTask(task: Task, e: React.MouseEvent) {
-    e.stopPropagation();
-    await supabase.from('tasks').update({ status: task.status === 'done' ? 'todo' : 'done' }).eq('id', task.id);
+  async function renameTask(t: ProjectTask, title: string) {
+    if (!title) return;
+    setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, title } : x)));
+    await supabase.from('project_tasks').update({ title }).eq('id', t.id);
   }
 
-  async function sendStageToReview(stage: Stage) { await supabase.from('stages').update({ status: 'on_review' }).eq('id', stage.id); }
-  async function approveStage(stage: Stage) { await supabase.from('stages').update({ status: 'approved' }).eq('id', stage.id); }
-  async function reworkStage(stage: Stage) { await supabase.from('stages').update({ status: 'in_progress' }).eq('id', stage.id); }
-
-  async function deleteProject() {
-    if (!confirm(`Удалить проект «${project.title}» вместе со всеми этапами и задачами?`)) return;
-    await supabase.from('projects').delete().eq('id', project.id);
-    window.location.href = '/board';
+  async function toggleTask(t: ProjectTask) {
+    await supabase.from('project_tasks').update({ is_done: !t.is_done }).eq('id', t.id);
   }
 
-  const assignee = profiles.find((p) => p.id === project.assignee_id);
-  const approved = project.status === 'approved';
+  async function deleteTask(t: ProjectTask) {
+    await supabase.from('project_tasks').delete().eq('id', t.id);
+  }
 
   return (
-    <div className="p-6 max-w-[1200px] mx-auto">
-      <Link href="/board" className="text-[13px] text-muted hover:text-text inline-flex items-center gap-1 mb-4">← К списку проектов</Link>
-
-      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <input
-              defaultValue={project.title}
-              onBlur={(e) => e.target.value !== project.title && updateProjectField({ title: e.target.value })}
-              className="text-xl font-extrabold outline-none bg-transparent"
-              style={{ minWidth: '200px' }}
+    <div className="p-6">
+      <Link href="/projects" className="inline-block text-sm text-muted hover:text-text mb-3.5">← Все проекты</Link>
+      <div className="mb-5">
+        <InlineEditText
+          value={proj.title}
+          onSave={(title) => title && saveProjectField({ title })}
+          displayClassName="text-xl font-extrabold tracking-tight"
+          inputClassName="text-xl font-extrabold tracking-tight w-full border border-border bg-surface2 rounded-lg px-2 py-1 outline-none focus:border-accent"
+        />
+        <InlineEditText
+          as="textarea"
+          value={proj.description ?? ''}
+          onSave={(description) => saveProjectField({ description })}
+          placeholder="Добавить описание проекта…"
+          displayClassName="text-sm text-muted mt-1 max-w-[640px] min-h-[20px]"
+          inputClassName="text-sm w-full max-w-[640px] border border-border bg-surface2 rounded-lg p-2 outline-none focus:border-accent min-h-[60px]"
+        />
+        <div className="flex items-center gap-4 mt-3 flex-wrap">
+          <div className="flex items-center gap-3 max-w-[420px] flex-1 min-w-[220px]">
+            <ProgressBar value={overallProgress} />
+            <span className="text-[13px] font-semibold flex-none">{Math.round(overallProgress)}%</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted font-semibold uppercase">Месяц сдачи</span>
+            <MonthSelect
+              value={proj.due_month ?? ''}
+              onChange={(due_month) => saveProjectField({ due_month })}
+              className="border border-border bg-surface2 rounded-lg px-2.5 py-1.5 text-[13px]"
             />
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: '#7C4FE022', color: '#7C4FE0' }}>Проект</span>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: (approved ? '#16A34A' : '#C77C0A') + '22', color: approved ? '#16A34A' : '#C77C0A' }}>
-              {approved ? 'Согласовано' : 'В работе'}
-            </span>
           </div>
-          <div className="text-[13px] text-muted flex items-center gap-3 flex-wrap">
-            <span>🗓 {formatDate(project.created_at)} – {formatDate(project.due_date)}</span>
-            <span>Ответственный: {assignee ? fullName(assignee) : '—'}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <div className="text-[11px] text-muted">Общий прогресс</div>
-            <div className="text-xl font-extrabold" style={{ color: '#7C4FE0' }}>{overallProgress}%</div>
-            <div className="w-[140px] h-1.5 bg-surface2 rounded-full mt-1 overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${overallProgress}%`, background: '#7C4FE0' }} />
-            </div>
-          </div>
-          <button onClick={() => setAddingStage(true)} className="text-xs font-semibold bg-accent text-white rounded-lg px-3 py-2 whitespace-nowrap">+ Добавить этап</button>
-          {(me?.id === project.reporter_id || canManage) && (
-            <button onClick={deleteProject} title="Удалить проект" className="text-muted hover:text-red w-8 h-8 flex-none">🗑</button>
-          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-[1fr_1fr] gap-4">
-
-        {/* ---- Этапы проекта ---- */}
-        <div className="card p-4">
-          <div className="text-[13px] font-bold mb-0.5">2. Этапы проекта <span className="text-muted font-normal">{stages.length} этап{stages.length === 1 ? '' : 'ов'}</span></div>
-          <div className="text-[11.5px] text-muted mb-3">Крупные направления работы по проекту</div>
-
-          <div className="flex flex-col gap-2">
-            {stages.map((stage, i) => {
-              const stageTasks = tasksByStage.get(stage.id) ?? [];
-              const doneCount = stageTasks.filter((t) => t.status === 'done').length;
-              const progress = stageTasks.length ? Math.round((doneCount / stageTasks.length) * 100) : 0;
-              const visual = stageVisual(stage, progress);
-              const selected = stage.id === selectedStageId;
+      <div className="grid grid-cols-[260px_1fr] gap-5 items-start">
+        <div className="card p-2.5">
+          <div className="flex items-center justify-between px-1.5 pb-2">
+            <span className="text-[11px] font-bold text-muted uppercase">Этапы</span>
+            <button onClick={() => setAddingStage(true)} className="text-muted hover:text-accent text-sm px-0.5">+</button>
+          </div>
+          <div className="flex flex-col gap-1">
+            {sortedStages.map((s) => {
+              const pct = stageProgress(s.id);
+              const active = activeStage?.id === s.id;
               return (
                 <div
-                  key={stage.id}
-                  onClick={() => setSelectedStageId(stage.id)}
-                  className={`border rounded-xl p-3 cursor-pointer transition-colors ${selected ? 'border-accent bg-accentSoft' : 'border-border hover:bg-surface2'}`}
+                  key={s.id}
+                  onClick={() => setActiveStageId(s.id)}
+                  className={`group text-left rounded-xl p-2.5 transition-colors cursor-pointer ${active ? 'bg-accentSoft' : 'hover:bg-surface2'}`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-none" style={{ background: visual.color }}>{i + 1}</div>
-                    <div className="flex-1 min-w-0">
-                      <input
-                        defaultValue={stage.title}
-                        onClick={(e) => e.stopPropagation()}
-                        onBlur={(e) => renameStage(stage, e.target.value)}
-                        className="text-[13.5px] font-semibold bg-transparent outline-none w-full"
+                  <div className="flex items-center gap-2">
+                    {editingStageId === s.id ? (
+                      <InlineEditText
+                        value={s.title}
+                        onSave={(title) => { renameStage(s, title); setEditingStageId(null); }}
+                        displayClassName={`text-[13px] font-semibold flex-1 ${active ? 'text-accent' : ''}`}
+                        inputClassName="text-[13px] font-semibold flex-1 border border-border bg-surface rounded-md px-1.5 py-0.5 outline-none focus:border-accent"
                       />
-                      <div className="text-[11px] text-muted">Задач: {doneCount}/{stageTasks.length}</div>
-                    </div>
-                    <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded-full flex-none" style={{ background: visual.color + '22', color: visual.color }}>{visual.label}</span>
-                    {canManage && (
-                      <button onClick={(e) => { e.stopPropagation(); deleteStage(stage); }} className="text-muted hover:text-red text-xs px-1 flex-none">🗑</button>
+                    ) : (
+                      <span className={`text-[13px] font-semibold flex-1 ${active ? 'text-accent' : ''}`}>{s.title}</span>
                     )}
+                    <span className="text-[11px] text-muted">{Math.round(pct)}%</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditingStageId(s.id); }}
+                      title="Переименовать этап"
+                      className="text-muted hover:text-accent text-[11px] opacity-0 group-hover:opacity-100 transition-opacity"
+                    >✎</button>
                   </div>
-                  <div className="w-full h-1.5 bg-surface2 rounded-full mt-2 overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${progress}%`, background: visual.color }} />
-                  </div>
+                  <div className="mt-1.5"><ProgressBar value={pct} size="sm" /></div>
                 </div>
               );
             })}
-            {stages.length === 0 && <div className="text-center py-6 text-[12px] text-muted">Этапов пока нет — добавьте первый</div>}
-
-            {addingStage && (
-              <div className="flex gap-2 mt-1">
-                <input
-                  autoFocus
-                  value={newStageTitle}
-                  onChange={(e) => setNewStageTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addStage()}
-                  onBlur={() => { if (!newStageTitle.trim()) setAddingStage(false); }}
-                  placeholder="Название этапа…"
-                  className="flex-1 border border-border bg-surface2 rounded-md px-2.5 py-1.5 text-[13px]"
-                />
-                <button onClick={addStage} className="px-3 border border-border rounded-md text-sm">Добавить</button>
-              </div>
-            )}
+            {sortedStages.length === 0 && <div className="text-center py-6 text-[12px] text-muted">Нет этапов</div>}
           </div>
+          {addingStage && (
+            <div className="p-1.5 mt-1">
+              <input
+                autoFocus
+                value={newStageTitle}
+                onChange={(e) => setNewStageTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addStage(); if (e.key === 'Escape') setAddingStage(false); }}
+                onBlur={() => { if (!newStageTitle.trim()) setAddingStage(false); }}
+                placeholder="Название этапа…"
+                className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-1.5 text-[13px]"
+              />
+            </div>
+          )}
         </div>
 
-        {/* ---- Задачи выбранного этапа ---- */}
         <div className="card p-4">
-          {selectedStage ? (
+          {activeStage ? (
             <>
-              <div className="flex items-start justify-between mb-0.5">
-                <div className="text-[13px] font-bold">{selectedIndex + 1}. Задачи этапа <span className="text-muted font-normal">{selectedStageTasks.length} задач</span></div>
-                <div className="text-right">
-                  <div className="text-[11px] text-muted">Прогресс этапа</div>
-                  <div className="text-[13px] font-bold" style={{ color: stageVisual(selectedStage, selectedStageProgress).color }}>{selectedStageProgress}%</div>
-                </div>
+              <div className="flex items-center justify-between mb-3.5">
+                <div className="font-bold text-[15px]">{activeStage.title}</div>
+                <button onClick={() => deleteStage(activeStage)} title="Удалить этап" className="text-muted hover:text-red text-xs">🗑</button>
               </div>
-              <div className="text-[11.5px] text-muted mb-3">{selectedStage.title}</div>
-
-              <div className="flex flex-col gap-1 mb-3">
-                {selectedStageTasks.map((t) => (
-                  <div key={t.id} onClick={() => setOpenTaskId(t.id)} className="flex items-center gap-2.5 py-2 border-b border-border cursor-pointer hover:bg-surface2 rounded-md px-1.5 -mx-1.5">
-                    <button onClick={(e) => toggleTask(t, e)} className="w-5 h-5 rounded-full border flex-none flex items-center justify-center text-[11px]"
-                      style={{ borderColor: t.status === 'done' ? '#16A34A' : 'var(--border-strong, #999)', background: t.status === 'done' ? '#16A34A' : 'transparent', color: '#fff' }}>
-                      {t.status === 'done' && '✓'}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-[13px] font-medium truncate ${t.status === 'done' ? 'line-through text-muted' : ''}`}>{t.title}</div>
-                      {t.description && <div className="text-[11px] text-muted truncate">{t.description}</div>}
-                      {t.due_date && <div className="text-[11px] text-muted">🗓 {formatDate(t.due_date)}</div>}
+              <div className="flex flex-col gap-1.5 mb-3">
+                {activeTasks.map((t) => (
+                  <div key={t.id} className="flex items-center gap-2.5 py-1.5 border-b border-border last:border-0 group">
+                    <input type="checkbox" checked={t.is_done} onChange={() => toggleTask(t)} />
+                    <div className="flex-1">
+                      <InlineEditText
+                        value={t.title}
+                        onSave={(title) => renameTask(t, title)}
+                        displayClassName={`text-[13.5px] ${t.is_done ? 'line-through text-muted' : ''}`}
+                        inputClassName="text-[13.5px] w-full border border-border bg-surface2 rounded-md px-1.5 py-0.5 outline-none focus:border-accent"
+                      />
                     </div>
-                    <Avatar profile={profiles.find((p) => p.id === t.assignee_id)} size={22} />
+                    <button onClick={() => deleteTask(t)} className="text-muted hover:text-red text-xs opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
                   </div>
                 ))}
-                {selectedStageTasks.length === 0 && <div className="text-center py-6 text-[12px] text-muted">Задач пока нет</div>}
+                {activeTasks.length === 0 && <div className="text-center py-8 text-[12.5px] text-muted">Нет задач в этом этапе</div>}
               </div>
-
-              <div className="flex gap-2 mb-3">
+              <div className="flex gap-2">
                 <input
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && addTask()}
                   placeholder="Добавить задачу…"
-                  className="flex-1 border border-border bg-surface2 rounded-md px-2.5 py-1.5 text-[13px]"
+                  className="flex-1 border border-border bg-surface2 rounded-lg px-2.5 py-1.5 text-[13px]"
                 />
-                <button onClick={addTask} className="px-3 border border-border rounded-md text-sm">+ Добавить задачу</button>
+                <button onClick={addTask} className="px-2.5 border border-border rounded-lg text-sm">+</button>
               </div>
-
-              {selectedStage.status === 'in_progress' && selectedStageTasks.length > 0 && selectedStageDone === selectedStageTasks.length && (isOwner || canManage) && (
-                <button onClick={() => sendStageToReview(selectedStage)} className="w-full text-xs font-semibold bg-accent text-white rounded-md px-2.5 py-2">
-                  Отправить на согласование
-                </button>
-              )}
-              {selectedStage.status === 'on_review' && canManage && (
-                <div className="flex gap-2">
-                  <button onClick={() => approveStage(selectedStage)} className="flex-1 text-xs font-semibold bg-green text-white rounded-md px-2.5 py-2">✓ Согласовать</button>
-                  <button onClick={() => reworkStage(selectedStage)} className="flex-1 text-xs font-semibold border border-border rounded-md px-2.5 py-2">↩ На доработку</button>
-                </div>
-              )}
             </>
           ) : (
-            <div className="text-center py-10 text-[13px] text-muted">Выберите этап слева, чтобы увидеть задачи</div>
+            <div className="text-center py-16 text-muted text-sm">Выберите или создайте этап слева</div>
           )}
         </div>
       </div>
-
-      {/* ---- О проекте ---- */}
-      <div className="card p-4 mt-4">
-        <div className="text-[13px] font-bold mb-2">О проекте</div>
-        <textarea
-          defaultValue={project.description}
-          onBlur={(e) => e.target.value !== project.description && updateProjectField({ description: e.target.value })}
-          placeholder="Описание проекта…"
-          className="w-full border border-border bg-surface2 rounded-lg p-2.5 text-[13px] min-h-[50px] mb-3"
-        />
-        <div className="flex items-center gap-6 flex-wrap text-[12.5px]">
-          <Metric icon="🗓" label="Старт проекта" value={formatDate(project.created_at)} />
-          <Metric icon="🏁" label="Завершение" value={formatDate(project.due_date)} />
-          <Metric icon="👤" label="Ответственный" value={assignee ? fullName(assignee) : '—'} />
-          <Metric icon="📋" label="Всего задач" value={String(totalTasks)} />
-          <Metric icon="📈" label="Общий прогресс" value={`${overallProgress}%`} />
-        </div>
-      </div>
-
-      {openTaskId && <TaskPanel taskId={openTaskId} profiles={profiles} stages={stages} onClose={() => setOpenTaskId(null)} />}
-    </div>
-  );
-}
-
-function stageVisual(stage: Stage, progress: number): { label: string; color: string } {
-  if (stage.status === 'approved') return { label: 'Согласовано', color: '#16A34A' };
-  if (stage.status === 'on_review') return { label: 'На согласовании', color: '#2F5FE0' };
-  if (progress === 100) return { label: 'Завершено', color: '#16A34A' };
-  if (progress > 0) return { label: 'В работе', color: '#C77C0A' };
-  return { label: 'Не начато', color: '#868C97' };
-}
-
-function Metric({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span>{icon}</span>
-      <span className="text-muted">{label}:</span>
-      <span className="font-semibold">{value}</span>
     </div>
   );
 }

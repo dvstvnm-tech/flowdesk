@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import type { Profile, Task } from '@/lib/database.types';
-import { PRIORITY_META, fullName } from '@/lib/utils';
+import { PRIORITY_META, fullName, currentMonthKey } from '@/lib/utils';
+import MonthSelect from '@/components/MonthSelect';
 
 export default function QuickAddModal({
   status, profiles, onClose, onCreated,
@@ -13,9 +14,12 @@ export default function QuickAddModal({
   const { profile: me } = useCurrentUser();
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
+  // «Процедуры» — задача привязана к месяцу, а не к точной дате
+  const isMonthBased = status === 'review';
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10);
   });
+  const [dueMonth, setDueMonth] = useState<string>(currentMonthKey());
   const [saving, setSaving] = useState(false);
 
   // Задачу всегда создаём на себя — независимо от того, где открыта форма
@@ -27,7 +31,9 @@ export default function QuickAddModal({
       .from('tasks')
       .insert({
         title: title.trim(), status, assignee_id: me.id, reporter_id: me.id,
-        priority, due_date: new Date(dueDate + 'T12:00:00').toISOString(),
+        priority,
+        due_date: isMonthBased ? null : new Date(dueDate + 'T12:00:00').toISOString(),
+        due_month: isMonthBased ? dueMonth : null,
       })
       .select().single();
     setSaving(false);
@@ -56,8 +62,12 @@ export default function QuickAddModal({
               </select>
             </div>
             <div>
-              <label className="text-xs font-semibold text-text2 block mb-1">Дедлайн</label>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm" />
+              <label className="text-xs font-semibold text-text2 block mb-1">{isMonthBased ? 'Месяц' : 'Дедлайн'}</label>
+              {isMonthBased ? (
+                <MonthSelect value={dueMonth} onChange={setDueMonth} />
+              ) : (
+                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full border border-border bg-surface2 rounded-lg px-2.5 py-2 text-sm" />
+              )}
             </div>
           </div>
         </div>

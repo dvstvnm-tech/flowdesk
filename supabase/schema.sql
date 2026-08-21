@@ -346,3 +346,62 @@ create policy "attachments_storage_delete" on storage.objects for delete using (
 -- ============================================================================
 -- Готово. Данные не сеются намеренно — рабочее пространство пустое.
 -- ============================================================================
+
+-- ============================================================================
+-- ПРОЕКТЫ — иерархия Проект → Этап → Задача (добавлено отдельно от tasks)
+-- ============================================================================
+create table public.projects (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  description text default '',
+  owner_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.project_stages (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references public.projects(id) on delete cascade,
+  title text not null,
+  position integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create table public.project_tasks (
+  id uuid primary key default gen_random_uuid(),
+  stage_id uuid references public.project_stages(id) on delete cascade,
+  title text not null,
+  is_done boolean not null default false,
+  assignee_id uuid references public.profiles(id) on delete set null,
+  position integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index project_stages_project_idx on public.project_stages(project_id, position);
+create index project_tasks_stage_idx on public.project_tasks(stage_id, position);
+
+alter table public.projects enable row level security;
+alter table public.project_stages enable row level security;
+alter table public.project_tasks enable row level security;
+
+create policy "projects_all" on public.projects for all using (auth.uid() is not null);
+create policy "project_stages_all" on public.project_stages for all using (auth.uid() is not null);
+create policy "project_tasks_all" on public.project_tasks for all using (auth.uid() is not null);
+
+alter publication supabase_realtime add table public.projects;
+alter publication supabase_realtime add table public.project_stages;
+alter publication supabase_realtime add table public.project_tasks;
+
+-- Дедлайн проекта (для карточки на Доске, как в макете)
+alter table public.projects add column if not exists due_date timestamptz;
+
+-- ============================================================================
+-- МЕСЯЦ ВМЕСТО ДАТЫ — для "Проектов" и "Процедур"
+-- Формат: 'YYYY-MM' (например '2026-09'). Позволяет группировать карточки
+-- по заголовку месяца вместо точной даты.
+-- ============================================================================
+alter table public.projects add column if not exists due_month text;
+alter table public.tasks    add column if not exists due_month text;
+
+create index if not exists projects_due_month_idx on public.projects(due_month);
+create index if not exists tasks_due_month_idx on public.tasks(due_month);

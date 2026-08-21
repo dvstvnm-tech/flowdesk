@@ -11,7 +11,7 @@ export default function AddTaskButton() {
       </button>
       {open && (
         <QuickAddModal
-          status="in_progress"
+          status="review"
           profiles={[]}
           onClose={() => setOpen(false)}
           onCreated={() => setOpen(false)}

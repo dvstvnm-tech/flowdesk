@@ -36,15 +36,48 @@ export const STATUS_META: Record<string, { label: string; color: string }> = {
   approved: { label: 'Согласовано', color: '#16A34A' },
 };
 export const STATUS_ORDER = ['backlog', 'review', 'done'];
-export const PROJECT_STATUS_META: Record<string, { label: string; color: string }> = {
-  active: { label: 'В работе', color: '#7C4FE0' },
-  approved: { label: 'Согласовано', color: '#16A34A' },
-};
-export const STAGE_STATUS_META: Record<string, { label: string; color: string }> = {
-  in_progress: { label: 'В работе', color: '#C77C0A' },
-  on_review: { label: 'На согласовании', color: '#2F5FE0' },
-  approved: { label: 'Согласовано', color: '#16A34A' },
-};
+
+// ---- Месяцы (для группировки "Проектов" и "Процедур" по месяцу) ----
+export const MONTHS_RU = [
+  'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+];
+
+// 'YYYY-MM' -> "Сентябрь 2026"
+export function monthLabel(monthKey: string | null | undefined): string {
+  if (!monthKey) return 'Без месяца';
+  const [y, m] = monthKey.split('-').map(Number);
+  if (!y || !m || m < 1 || m > 12) return 'Без месяца';
+  return `${MONTHS_RU[m - 1]} ${y}`;
+}
+
+// текущий месяц в формате 'YYYY-MM'
+export function currentMonthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// список из `count` месяцев, начиная с текущего, в формате 'YYYY-MM'
+export function upcomingMonthKeys(count = 15): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < count; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return out;
+}
+
+// сортировка ключей месяца по возрастанию, "без месяца" — в конец
+export function sortMonthKeys(keys: (string | null)[]): (string | null)[] {
+  return [...keys].sort((a, b) => {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
+  });
+}
 export function fullName(p: { first_name?: string; last_name?: string } | null | undefined): string {
   if (!p) return '';
   return `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim();
