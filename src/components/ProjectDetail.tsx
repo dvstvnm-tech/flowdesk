@@ -64,6 +64,11 @@ export default function ProjectDetail({
     return (relevant.filter((t) => t.is_done).length / relevant.length) * 100;
   }, [tasks, stages]);
 
+  const totalSubtasks = useMemo(() => {
+    const stageIds = stages.map((s) => s.id);
+    return tasks.filter((t) => stageIds.includes(t.stage_id)).length;
+  }, [tasks, stages]);
+
   function stageProgress(stageId: string) {
     const list = tasks.filter((t) => t.stage_id === stageId);
     if (list.length === 0) return 0;
@@ -123,6 +128,10 @@ export default function ProjectDetail({
     await supabase.from('project_tasks').delete().eq('id', t.id);
   }
 
+  async function submitForApproval() {
+    await saveProjectField({ approval_status: 'review' });
+  }
+
   return (
     <div className="p-6 max-w-[1100px]">
       <button
@@ -133,12 +142,30 @@ export default function ProjectDetail({
       </button>
 
       <div className="card p-5 mb-5">
-        <InlineEditText
-          value={proj.title}
-          onSave={(title) => title && saveProjectField({ title })}
-          displayClassName="text-xl font-extrabold tracking-tight"
-          inputClassName="text-xl font-extrabold tracking-tight w-full border border-border bg-surface2 rounded-lg px-3 py-1.5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/10"
-        />
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <InlineEditText
+                value={proj.title}
+                onSave={(title) => title && saveProjectField({ title })}
+                displayClassName="text-xl font-extrabold tracking-tight"
+                inputClassName="text-xl font-extrabold tracking-tight w-full border border-border bg-surface2 rounded-lg px-3 py-1.5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/10"
+              />
+              {proj.approval_status === 'review' && (
+                <span className="text-[11px] font-semibold rounded-full px-2.5 py-1 bg-accentSoft text-accent flex-none">На согласовании</span>
+              )}
+              {proj.approval_status === 'approved' && (
+                <span className="text-[11px] font-semibold rounded-full px-2.5 py-1 bg-green/15 text-green flex-none">✓ Согласовано</span>
+              )}
+            </div>
+          </div>
+          {proj.approval_status === 'active' && overallProgress === 100 && totalSubtasks > 0 && (
+            <button
+              onClick={submitForApproval}
+              className="flex-none text-xs font-semibold bg-green text-white rounded-lg px-3.5 py-2 hover:opacity-90 transition-opacity"
+            >✓ Выполнено</button>
+          )}
+        </div>
         <InlineEditText
           as="textarea"
           value={proj.description ?? ''}

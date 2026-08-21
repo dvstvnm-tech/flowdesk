@@ -139,6 +139,12 @@ export default function KanbanBoard({
     if (error) alert('Не удалось удалить проект: ' + error.message);
   }
 
+  async function approveProject(project: Project) {
+    setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, approval_status: 'approved' } : p)));
+    const { error } = await supabase.from('projects').update({ approval_status: 'approved' }).eq('id', project.id);
+    if (error) alert('Не удалось согласовать проект: ' + error.message);
+  }
+
   const total = tasks.length;
   const review = tasks.filter((t) => t.status === 'review').length;
   const overdue = tasks.filter((t) => isOverdue(t.due_date, t.status)).length;
@@ -229,6 +235,7 @@ export default function KanbanBoard({
           onAddProject={() => setAddingProject(true)}
           onDeleteTask={deleteTask}
           onDeleteProject={deleteProject}
+          onApproveProject={approveProject}
         />
       ))}
       {profiles.length === 0 && <div className="text-muted text-sm text-center py-10">Пока никто не вошёл в систему</div>}
@@ -255,13 +262,15 @@ export default function KanbanBoard({
 }
 
 function EmployeeSection({
-  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject, onDeleteTask, onDeleteProject,
+  profile, tasks, projects, projectProgress, isMine, onOpenTask, onAdd, onAddProject, onDeleteTask, onDeleteProject, onApproveProject,
 }: {
   profile: Profile; tasks: Task[]; projects: Project[];
   projectProgress: (id: string) => { pct: number; total: number };
   isMine: boolean; onOpenTask: (id: string) => void; onAdd: (status: string) => void; onAddProject: () => void;
-  onDeleteTask: (task: Task) => void; onDeleteProject: (project: Project) => void;
+  onDeleteTask: (task: Task) => void; onDeleteProject: (project: Project) => void; onApproveProject: (project: Project) => void;
 }) {
+  const projectsInReview = projects.filter((p) => p.approval_status === 'review');
+  const doneTasksCount = tasks.filter((t) => t.status === 'done').length;
   return (
     <div className="mb-7">
       <div className="flex items-center gap-2.5 mb-2.5">
@@ -280,11 +289,15 @@ function EmployeeSection({
           {tasks.filter((t) => t.status === 'review').length === 0 && <Empty />}
         </Block>
 
-        <Block color={BLOCK_COLORS.done} label={STATUS_META.done.label} subtitle={BLOCK_SUBTITLES.done} count={tasks.filter((t) => t.status === 'done').length} isMine={isMine} onAdd={() => onAdd('done')}>
+        <Block color={BLOCK_COLORS.done} label={STATUS_META.done.label} subtitle={BLOCK_SUBTITLES.done} count={doneTasksCount + projectsInReview.length} isMine={isMine} onAdd={() => onAdd('done')}>
+          {projectsInReview.map((pr) => {
+            const { pct, total } = projectProgress(pr.id);
+            return <ProjectApprovalCard key={pr.id} project={pr} pct={pct} subtaskCount={total} onApprove={() => onApproveProject(pr)} />;
+          })}
           {tasks.filter((t) => t.status === 'done').map((t) => (
             <TaskCard key={t.id} task={t} onOpen={() => onOpenTask(t.id)} showApprovalBadge isMine={isMine} onDelete={() => onDeleteTask(t)} />
           ))}
-          {tasks.filter((t) => t.status === 'done').length === 0 && <Empty />}
+          {doneTasksCount === 0 && projectsInReview.length === 0 && <Empty />}
         </Block>
       </div>
     </div>
@@ -315,18 +328,29 @@ function Empty() {
 function MonthGroupedProjects({
   projects, projectProgress, isMine, onDelete,
 }: { projects: Project[]; projectProgress: (id: string) => { pct: number; total: number }; isMine: boolean; onDelete: (project: Project) => void }) {
-  const keys = sortMonthKeys(Array.from(new Set(projects.map((p) => p.due_month ?? null))));
+  const archived = projects.filter((p) => p.approval_status === 'approved');
+  const active = projects.filter((p) => p.approval_status !== 'approved');
+  const keys = sortMonthKeys(Array.from(new Set(active.map((p) => p.due_month ?? null))));
   return (
     <>
       {keys.map((key) => (
         <div key={key ?? 'none'} className="flex flex-col gap-2">
           <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">{monthLabel(key)}</div>
-          {projects.filter((p) => (p.due_month ?? null) === key).map((pr) => {
+          {active.filter((p) => (p.due_month ?? null) === key).map((pr) => {
             const { pct, total } = projectProgress(pr.id);
             return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} isMine={isMine} onDelete={() => onDelete(pr)} />;
           })}
         </div>
       ))}
+      {archived.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="text-[10.5px] font-bold text-muted uppercase tracking-wide px-0.5 -mb-1">Архивные задачи</div>
+          {archived.map((pr) => {
+            const { pct, total } = projectProgress(pr.id);
+            return <ProjectCard key={pr.id} project={pr} pct={pct} subtaskCount={total} isMine={isMine} onDelete={() => onDelete(pr)} />;
+          })}
+        </div>
+      )}
     </>
   );
 }
@@ -372,11 +396,40 @@ function ProjectCard({
         <ProgressBar value={pct} size="sm" />
         <span className="text-[11px] font-semibold text-muted flex-none">{Math.round(pct)}%</span>
       </div>
-      <div className="flex items-center justify-between gap-2">
-        {project.due_month && <span className="text-[11px] text-muted flex items-center gap-1">📅 {monthLabel(project.due_month)}</span>}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        {project.approval_status === 'review' && (
+          <span className="text-[10.5px] font-semibold rounded-full px-2 py-0.5 bg-accentSoft text-accent">На согласовании</span>
+        )}
+        {project.approval_status === 'approved' && (
+          <span className="text-[10.5px] font-semibold rounded-full px-2 py-0.5 bg-green/15 text-green">✓ Согласовано</span>
+        )}
+        {project.approval_status === 'active' && project.due_month && (
+          <span className="text-[11px] text-muted flex items-center gap-1">📅 {monthLabel(project.due_month)}</span>
+        )}
         <span className="ml-auto text-[10.5px] font-semibold bg-accentSoft text-accent rounded-full px-2 py-0.5">{subtaskCount} подзадач ›</span>
       </div>
     </Link>
+  );
+}
+
+function ProjectApprovalCard({
+  project, pct, subtaskCount, onApprove,
+}: { project: Project; pct: number; subtaskCount: number; onApprove: () => void }) {
+  return (
+    <div className="bg-surface border border-border rounded-[10px] p-2.5 shadow-sm hover:shadow transition-shadow" style={{ borderLeft: '3px solid var(--accent)' }}>
+      <Link href={`/projects/${project.id}`} className="block mb-2.5">
+        <div className="text-[13px] font-semibold mb-2">{project.title}</div>
+        <div className="flex items-center gap-2">
+          <ProgressBar value={pct} size="sm" />
+          <span className="text-[11px] font-semibold text-muted flex-none">{Math.round(pct)}%</span>
+        </div>
+        <div className="text-[10.5px] text-muted mt-1.5">{subtaskCount} подзадач · проект</div>
+      </Link>
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onApprove(); }}
+        className="w-full text-xs font-semibold bg-green text-white rounded-lg px-2.5 py-1.5 hover:opacity-90 transition-opacity"
+      >✓ Согласовано</button>
+    </div>
   );
 }
 

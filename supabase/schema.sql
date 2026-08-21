@@ -405,3 +405,10 @@ alter table public.tasks    add column if not exists due_month text;
 
 create index if not exists projects_due_month_idx on public.projects(due_month);
 create index if not exists tasks_due_month_idx on public.tasks(due_month);
+
+-- ============================================================================
+-- СТАТУС СОГЛАСОВАНИЯ ПРОЕКТА
+-- 'active' — в работе, 'review' — отправлен на согласование, 'approved' — согласован (архив)
+-- ============================================================================
+alter table public.projects add column if not exists approval_status text not null default 'active';
+create index if not exists projects_approval_status_idx on public.projects(approval_status);

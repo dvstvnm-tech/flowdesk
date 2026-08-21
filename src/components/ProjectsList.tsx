@@ -57,14 +57,18 @@ export default function ProjectsList({
     return (projectTasks.filter((t) => t.is_done).length / projectTasks.length) * 100;
   }
 
-  // Группировка проектов по месяцу сдачи — заголовок месяца сверху, проекты этого месяца под ним
+  // Группировка: активные/на согласовании — по месяцу сдачи, согласованные — в архив
   const groups = useMemo(() => {
-    const keys = sortMonthKeys(Array.from(new Set(projects.map((p) => p.due_month ?? null))));
-    return keys.map((key) => ({
+    const active = projects.filter((p) => p.approval_status !== 'approved');
+    const archived = projects.filter((p) => p.approval_status === 'approved');
+    const keys = sortMonthKeys(Array.from(new Set(active.map((p) => p.due_month ?? null))));
+    const monthGroups = keys.map((key) => ({
       key,
       label: monthLabel(key),
-      items: projects.filter((p) => (p.due_month ?? null) === key),
+      items: active.filter((p) => (p.due_month ?? null) === key),
     }));
+    if (archived.length > 0) monthGroups.push({ key: 'archived', label: 'Архивные задачи', items: archived });
+    return monthGroups;
   }, [projects]);
 
   return (
@@ -91,7 +95,15 @@ export default function ProjectsList({
               const pct = progressFor(p.id);
               return (
                 <Link key={p.id} href={`/projects/${p.id}`} className="card p-5 hover:shadow-md transition-shadow block">
-                  <div className="font-bold text-[15px] mb-1">{p.title}</div>
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div className="font-bold text-[15px]">{p.title}</div>
+                    {p.approval_status === 'review' && (
+                      <span className="text-[10.5px] font-semibold rounded-full px-2 py-0.5 bg-accentSoft text-accent flex-none">На согласовании</span>
+                    )}
+                    {p.approval_status === 'approved' && (
+                      <span className="text-[10.5px] font-semibold rounded-full px-2 py-0.5 bg-green/15 text-green flex-none">✓ Согласовано</span>
+                    )}
+                  </div>
                   {p.description && <div className="text-[12.5px] text-muted mb-3 line-clamp-2">{p.description}</div>}
                   <div className="flex items-center gap-3">
                     <ProgressBar value={pct} />

@@ -56,6 +56,7 @@ export interface Project {
   owner_id: string | null;
   due_date: string | null;
   due_month: string | null; // 'YYYY-MM' — месяц, в котором проект должен быть выполнен
+  approval_status: 'active' | 'review' | 'approved';
   created_at: string;
   updated_at: string;
 }
